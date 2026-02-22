@@ -4574,32 +4574,70 @@ async def buy_business_menu(callback: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("buy_biz_"))
 async def buy_business_choose(callback: types.CallbackQuery, state: FSMContext):
-    if callback.data == "buy_biz_cancel":
-        await callback.message.delete()
+    try:
+        # Отвечаем на колбэк сразу, чтобы кнопка не "залипала"
         await callback.answer()
-        return
-    biz_type_id = int(callback.data.split("_")[2])
-    user_id = callback.from_user.id
-    biz_type = await get_business_type(biz_type_id)
-    if not biz_type:
-        await callback.answer("Бизнес не найден.", show_alert=True)
-        return
-    if not biz_type.get('available', True):
-        await callback.answer("Этот бизнес временно недоступен для покупки.", show_alert=True)
-        return
-    existing = await get_user_business(user_id, biz_type_id)
-    if existing:
-        await callback.answer("У тебя уже есть такой бизнес!", show_alert=True)
-        return
-    price = biz_type['base_price_btc']
-    btc_balance = await get_user_bitcoin(user_id)
-    if btc_balance < price - 0.0001:
-        await callback.answer(f"Недостаточно биткоинов. Нужно {price:.2f} BTC, у тебя {btc_balance:.4f}.", show_alert=True)
-        return
-    await state.update_data(biz_type_id=biz_type_id, price=price, biz_name=biz_type['name'], biz_emoji=biz_type['emoji'])
-    await callback.message.answer(f"Ты уверен, что хочешь купить бизнес «{biz_type['emoji']} {biz_type['name']}» за {price:.2f} BTC? (да/нет)", reply_markup=back_keyboard())
-    await BuyBusiness.confirming.set()
-    await callback.answer()
+        
+        if callback.data == "buy_biz_cancel":
+            await callback.message.delete()
+            return
+
+        # Разбираем ID бизнеса
+        parts = callback.data.split("_")
+        if len(parts) < 3:
+            await callback.message.answer("❌ Ошибка: неверный формат данных")
+            return
+            
+        biz_type_id = int(parts[2])
+        user_id = callback.from_user.id
+        
+        # Получаем информацию о бизнесе
+        biz_type = await get_business_type(biz_type_id)
+        if not biz_type:
+            await callback.message.answer("❌ Бизнес не найден.")
+            return
+
+        # Проверяем доступность
+        if not biz_type.get('available', True):
+            await callback.message.answer("❌ Этот бизнес временно недоступен для покупки.")
+            return
+
+        # Проверяем, нет ли уже такого бизнеса
+        existing = await get_user_business(user_id, biz_type_id)
+        if existing:
+            await callback.message.answer("❌ У тебя уже есть такой бизнес!")
+            return
+
+        # Проверяем баланс
+        price = biz_type['base_price_btc']
+        btc_balance = await get_user_bitcoin(user_id)
+        if btc_balance < price - 0.0001:
+            await callback.message.answer(
+                f"❌ Недостаточно биткоинов. Нужно {price:.2f} BTC, у тебя {btc_balance:.4f} BTC."
+            )
+            return
+
+        # Сохраняем данные и запрашиваем подтверждение
+        await state.update_data(
+            biz_type_id=biz_type_id, 
+            price=price, 
+            biz_name=biz_type['name'], 
+            biz_emoji=biz_type['emoji']
+        )
+        
+        await callback.message.answer(
+            f"Ты уверен, что хочешь купить бизнес «{biz_type['emoji']} {biz_type['name']}» за {price:.2f} BTC?\n\n"
+            f"💰 Твой баланс: {btc_balance:.4f} BTC\n"
+            f"💎 После покупки останется: {(btc_balance - price):.4f} BTC\n\n"
+            f"Ответь 'да' или 'нет':",
+            reply_markup=back_keyboard()
+        )
+        await BuyBusiness.confirming.set()
+
+    except Exception as e:
+        logging.error(f"Ошибка в buy_business_choose: {e}", exc_info=True)
+        await callback.message.answer("❌ Произошла внутренняя ошибка. Попробуй позже.")
+
 
 @dp.message_handler(state=BuyBusiness.confirming)
 async def buy_business_confirm(message: types.Message, state: FSMContext):
