@@ -1078,7 +1078,7 @@ def sub_inline(not_sub):
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 # ========== СОСТОЯНИЯ (FSM) ==========
-class States:
+class States(StatesGroup):
     dice_bet = State()
     guess_bet = State()
     guess_num = State()
