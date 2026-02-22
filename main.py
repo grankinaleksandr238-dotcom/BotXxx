@@ -4014,17 +4014,35 @@ async def shop_page_callback(callback: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("buy_"))
 async def buy_callback(callback: types.CallbackQuery):
+    # Проверяем, не наш ли это колбэк (для бизнесов есть отдельный обработчик)
+    if callback.data.startswith("buy_biz_"):
+        # Это не наша кнопка, игнорируем
+        return
+    
     user_id = callback.from_user.id
     if await is_banned(user_id) and not await is_admin(user_id):
         await callback.answer("⛔ Вы заблокированы.", show_alert=True)
         return
+    
     await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
     ok, not_subscribed = await check_subscription(user_id)
     if not ok:
         await callback.message.edit_text("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
         return
-    item_id = int(callback.data.split("_")[1])
+    
     try:
+        parts = callback.data.split("_")
+        if len(parts) < 2:
+            await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
+            return
+        
+        # Проверяем, что это число
+        if not parts[1].isdigit():
+            await callback.answer("❌ Это не ID товара", show_alert=True)
+            return
+            
+        item_id = int(parts[1])
+        
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1", item_id)
             if not row:
@@ -4063,17 +4081,6 @@ async def buy_callback(callback: types.CallbackQuery):
         logging.error(f"Purchase error: {e}")
         await callback.answer("❌ Ошибка при покупке. Попробуй позже.", show_alert=True)
 
-async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
-    admins = SUPER_ADMINS.copy()
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT user_id FROM admins")
-        for row in rows:
-            admins.append(row['user_id'])
-    for admin_id in admins:
-        await safe_send_message(admin_id,
-            f"🛒 Покупка: пользователь {user.full_name} (@{user.username})\n"
-            f"<a href=\"tg://user?id={user.id}\">Ссылка</a> купил {item_name} за {price:.2f} баксов."
-        )
 
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message_handler(lambda message: message.text == "💰 Мои покупки")
