@@ -4575,14 +4575,12 @@ async def buy_business_menu(callback: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data.startswith("buy_biz_"))
 async def buy_business_choose(callback: types.CallbackQuery, state: FSMContext):
     try:
-        # Отвечаем на колбэк сразу, чтобы кнопка не "залипала"
         await callback.answer()
         
         if callback.data == "buy_biz_cancel":
             await callback.message.delete()
             return
 
-        # Разбираем ID бизнеса
         parts = callback.data.split("_")
         if len(parts) < 3:
             await callback.message.answer("❌ Ошибка: неверный формат данных")
@@ -4591,24 +4589,20 @@ async def buy_business_choose(callback: types.CallbackQuery, state: FSMContext):
         biz_type_id = int(parts[2])
         user_id = callback.from_user.id
         
-        # Получаем информацию о бизнесе
         biz_type = await get_business_type(biz_type_id)
         if not biz_type:
             await callback.message.answer("❌ Бизнес не найден.")
             return
 
-        # Проверяем доступность
         if not biz_type.get('available', True):
-            await callback.message.answer("❌ Этот бизнес временно недоступен для покупки.")
+            await callback.message.answer("❌ Этот бизнес временно недоступен.")
             return
 
-        # Проверяем, нет ли уже такого бизнеса
         existing = await get_user_business(user_id, biz_type_id)
         if existing:
             await callback.message.answer("❌ У тебя уже есть такой бизнес!")
             return
 
-        # Проверяем баланс
         price = biz_type['base_price_btc']
         btc_balance = await get_user_bitcoin(user_id)
         if btc_balance < price - 0.0001:
@@ -4617,7 +4611,6 @@ async def buy_business_choose(callback: types.CallbackQuery, state: FSMContext):
             )
             return
 
-        # Сохраняем данные и запрашиваем подтверждение
         await state.update_data(
             biz_type_id=biz_type_id, 
             price=price, 
