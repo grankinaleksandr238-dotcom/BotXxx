@@ -1183,6 +1183,20 @@ async def get_media_file_id(key: str) -> Optional[str]:
         file_id = await conn.fetchval("SELECT file_id FROM media WHERE key=$1", key)
         return file_id
 
+# ==================== НОВАЯ ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ СТАВОК ====================
+async def save_last_bet(user_id: int, game: str, amount: float, bet_data: dict = None):
+    """Сохраняет последнюю ставку пользователя для возможности повтора."""
+    async with db_pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO user_last_bets (user_id, game, bet_amount, bet_data, updated_at)
+            VALUES ($1, $2, $3, $4, NOW())
+            ON CONFLICT (user_id, game) DO UPDATE SET
+                bet_amount = EXCLUDED.bet_amount,
+                bet_data = EXCLUDED.bet_data,
+                updated_at = NOW()
+        """, user_id, game, amount, json.dumps(bet_data) if bet_data else None)
+# =============================================================================
+
 # ==================== ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ====================
 async def ensure_user_exists(user_id: int, username: str = None, first_name: str = None):
     async with db_pool.acquire() as conn:
@@ -3935,18 +3949,6 @@ async def process_roulette_repeat(user_id: int, amount: float, bet_type: str, nu
 
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
 # ==================== ЧАСТЬ 4: МАГАЗИН, ПРОМОКОДЫ, ОГРАБЛЕНИЕ, РЕФЕРАЛЫ, ЗАДАНИЯ, БИЗНЕСЫ, БИРЖА, РОЗЫГРЫШИ ====================
-
-# ==================== ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ СОХРАНЕНИЯ СТАВОК ====================
-async def save_last_bet(user_id: int, game: str, amount: float, bet_data: dict = None):
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO user_last_bets (user_id, game, bet_amount, bet_data, updated_at)
-            VALUES ($1, $2, $3, $4, NOW())
-            ON CONFLICT (user_id, game) DO UPDATE SET
-                bet_amount = EXCLUDED.bet_amount,
-                bet_data = EXCLUDED.bet_data,
-                updated_at = NOW()
-        """, user_id, game, amount, json.dumps(bet_data) if bet_data else None)
 
 # ==================== МАГАЗИН ПОДАРКОВ ====================
 @dp.message_handler(lambda message: message.text == "🛒 Магазин подарков")
