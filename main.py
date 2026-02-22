@@ -4017,6 +4017,7 @@ async def buy_callback(callback: types.CallbackQuery):
     # Проверяем, не наш ли это колбэк (для бизнесов есть отдельный обработчик)
     if callback.data.startswith("buy_biz_"):
         # Это не наша кнопка, игнорируем
+        print(f"⏭️ Игнорируем бизнес: {callback.data}")
         return
     
     user_id = callback.from_user.id
@@ -4035,6 +4036,52 @@ async def buy_callback(callback: types.CallbackQuery):
         if len(parts) < 2:
             await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
             return
+        
+        # Проверяем, что это число
+        if not parts[1].isdigit():
+            await callback.answer("❌ Это не ID товара", show_alert=True)
+            return
+            
+        item_id = int(parts[1])
+        print(f"🛒 Покупка товара ID: {item_id}")
+        
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1", item_id)
+            if not row:
+                await callback.answer("Товар не найден", show_alert=True)
+                return
+            name, price, stock = row['name'], float(row['price']), row['stock']
+            if stock != -1 and stock <= 0:
+                await callback.answer("Товара нет в наличии!", show_alert=True)
+                return
+            balance = await get_user_balance(user_id)
+            if balance < price:
+                await callback.answer("Не хватает баксов!", show_alert=True)
+                return
+            async with conn.transaction():
+                await update_user_balance(user_id, -price, conn=conn)
+                await update_user_total_spent(user_id, price)
+                await conn.execute(
+                    "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
+                    user_id, item_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                )
+                if stock != -1:
+                    await conn.execute("UPDATE shop_items SET stock = stock - 1 WHERE id=$1", item_id)
+
+        phrase = "✅ Куплено! Админ скоро свяжется."
+        await callback.answer(f"✅ Ты купил {name}! {phrase}", show_alert=True)
+
+        if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
+            user = callback.from_user
+            chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
+            await notify_chats(chat_phrase)
+
+        asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
+        await send_with_media(user_id, f"✅ Покупка совершена! {phrase}", media_key='purchase')
+        await callback.message.delete()
+    except Exception as e:
+        logging.error(f"Purchase error: {e}")
+        await callback.answer("❌ Ошибка при покупке. Попробуй позже.", show_alert=True)
         
         # Проверяем, что это число
         if not parts[1].isdigit():
