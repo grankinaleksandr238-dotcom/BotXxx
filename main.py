@@ -47,6 +47,17 @@ if not DATABASE_URL:
 if "sslmode" not in DATABASE_URL:
     DATABASE_URL += "?sslmode=require"
 
+# ==================== СОЗДАНИЕ БОТА И СБРОС ВЕБХУКА ====================
+bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+
+async def kill_webhook():
+    await bot.delete_webhook(drop_pending_updates=True)
+    print("🔥 Вебхук уничтожен!")
+
+loop = asyncio.new_event_loop()
+asyncio.set_event_loop(loop)
+loop.run_until_complete(kill_webhook())
+
 # ==================== НАСТРОЙКИ ПО УМОЛЧАНИЮ ====================
 DEFAULT_SETTINGS = {
     # ----- КРАЖА -----
