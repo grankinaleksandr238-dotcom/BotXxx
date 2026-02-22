@@ -47,27 +47,18 @@ if not DATABASE_URL:
 if "sslmode" not in DATABASE_URL:
     DATABASE_URL += "?sslmode=require"
 
-# ==================== АГРЕССИВНЫЙ СБРОС ВСЕХ ПОДКЛЮЧЕНИЙ ====================
+# ==================== СОЗДАНИЕ БОТА ====================
 bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
 
-async def kill_everything():
-    # Удаляем вебхук
+# ==================== СБРОС ВЕБХУКА ====================
+async def kill_webhook():
     await bot.delete_webhook(drop_pending_updates=True)
-    print("🔥 Вебхук удален")
-    
-    # Закрываем все сессии
-    await bot.close()
-    print("🔥 Бот закрыт")
-    
-    # Создаем нового бота
-    global bot
-    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
-    print("✅ Новый бот создан")
+    print("🔥 Вебхук уничтожен!")
 
 loop = asyncio.new_event_loop()
 asyncio.set_event_loop(loop)
-loop.run_until_complete(kill_everything())
-# ============================================================
+loop.run_until_complete(kill_webhook())
+# =====================================================
 
 # ==================== НАСТРОЙКИ ПО УМОЛЧАНИЮ ====================
 DEFAULT_SETTINGS = {
