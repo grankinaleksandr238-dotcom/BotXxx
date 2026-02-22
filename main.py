@@ -4581,7 +4581,9 @@ async def buy_business_menu(callback: types.CallbackQuery):
 
 @dp.callback_query_handler(lambda c: c.data.startswith("buy_biz_"))
 async def buy_business_choose(callback: types.CallbackQuery, state: FSMContext):
+    print(f"🔥 ФУНКЦИЯ ВЫЗВАНА! Data: {callback.data}")  # ЭТО ВАЖНО!
     try:
+        # ... остальной код
         await callback.answer()
         
         if callback.data == "buy_biz_cancel":
