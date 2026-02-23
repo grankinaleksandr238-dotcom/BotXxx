@@ -4850,9 +4850,9 @@ async def buy_business_menu(callback: CallbackQuery):
     await callback.answer()
 
 # ----- ВАЖНО: Этот хендлер должен быть зарегистрирован ДО магазинного, чтобы не перехватывать buy_ -----
-@dp.callback_query_handler(lambda c: c.data.startswith("buy_biz_"))
+@dp.callback_query_handler(lambda c: c.data.startswith("bizbuy_"))
 async def buy_business_choose(callback: CallbackQuery, state: FSMContext):
-    if callback.data == "buy_biz_cancel":
+    if callback.data == "bizbuy_cancel":
         await callback.message.delete()
         await callback.answer()
         return
