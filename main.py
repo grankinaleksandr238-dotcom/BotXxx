@@ -4323,8 +4323,8 @@ async def shop_page_callback(callback: CallbackQuery):
     await shop_handler(callback.message)
     await callback.answer()
 
-# ----- ИСПРАВЛЕННЫЙ КОНФЛИКТ: КУПЛЯ ТОВАРА -----
-@dp.callback_query_handler(lambda c: c.data.startswith("buy_") and not c.data.startswith("buy_biz_"))
+# ----- ИСПРАВЛЕННЫЙ ХЕНДЛЕР МАГАЗИНА ПОДАРКОВ -----
+@dp.callback_query_handler(lambda c: c.data.startswith("buy_item_"))
 async def buy_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
     if await is_banned(user_id) and not await is_admin(user_id):
@@ -4340,15 +4340,15 @@ async def buy_callback(callback: CallbackQuery):
 
     try:
         parts = callback.data.split("_")
-        if len(parts) < 2:
+        if len(parts) < 3:  # ИСПРАВЛЕНО: ожидаем минимум 3 части (buy_item_123)
             await callback.answer("❌ Ошибка: неверный формат", show_alert=True)
             return
 
-        if not parts[1].isdigit():
+        if not parts[2].isdigit():  # ИСПРАВЛЕНО: берём третью часть
             await callback.answer("❌ Это не ID товара", show_alert=True)
             return
 
-        item_id = int(parts[1])
+        item_id = int(parts[2])  # ИСПРАВЛЕНО: берём третью часть
 
         async with db_pool.acquire() as conn:
             row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1", item_id)
