@@ -4850,6 +4850,7 @@ async def buy_business_menu(callback: CallbackQuery):
     await callback.answer()
 
 # ----- ВАЖНО: Этот хендлер должен быть зарегистрирован ДО магазинного, чтобы не перехватывать buy_ -----
+# ----- ПОКУПКА БИЗНЕСА (исправленная версия) -----
 @dp.callback_query_handler(lambda c: c.data.startswith("bizbuy_"))
 async def buy_business_choose(callback: CallbackQuery, state: FSMContext):
     if callback.data == "bizbuy_cancel":
@@ -4858,12 +4859,12 @@ async def buy_business_choose(callback: CallbackQuery, state: FSMContext):
         return
 
     parts = callback.data.split("_")
-    if len(parts) < 3:
+    if len(parts) < 2:
         await callback.message.answer("❌ Ошибка: неверный формат данных")
         await callback.answer()
         return
 
-    biz_type_id = int(parts[2])
+    biz_type_id = int(parts[1])
     user_id = callback.from_user.id
 
     biz_type = await get_business_type(biz_type_id)
