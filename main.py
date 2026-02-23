@@ -505,9 +505,24 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 )
 
+# ==================== ЛОГИРОВАНИЕ В ФАЙЛ (ДОБАВЛЕНО) ====================
+import sys
+
+file_handler = logging.FileHandler('bot_errors.log', encoding='utf-8')
+file_handler.setLevel(logging.ERROR)
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+file_handler.setFormatter(formatter)
+logging.getLogger('').addHandler(file_handler)
+
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(formatter)
+logging.getLogger('').addHandler(console_handler)
+
 # ==================== ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ ====================
 db_pool = None
 settings_cache = {}
+...
 last_settings_update = 0
 channels_cache = []
 last_channels_update = 0
