@@ -4783,6 +4783,7 @@ async def my_purchases(message: Message):
     if not ok:
         await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
         return
+    
     page = 1
     try:
         parts = message.text.split()
@@ -4790,6 +4791,7 @@ async def my_purchases(message: Message):
             page = int(parts[1])
     except:
         pass
+    
     offset = (page - 1) * ITEMS_PER_PAGE
     async with db_pool.acquire() as conn:
         total = await conn.fetchval("SELECT COUNT(*) FROM purchases WHERE user_id=$1", user_id)
@@ -4798,9 +4800,11 @@ async def my_purchases(message: Message):
             "JOIN shop_items s ON p.item_id = s.id WHERE p.user_id=$1 ORDER BY p.purchase_date DESC LIMIT $2 OFFSET $3",
             user_id, ITEMS_PER_PAGE, offset
         )
+    
     if not rows:
         await message.answer("У тебя пока нет покупок.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
         return
+    
     text = f"📦 Твои покупки (страница {page}):\n\n"
     for row in rows:
         pid, name, date, status, comment = row['id'], row['name'], row['purchase_date'], row['status'], row['admin_comment']
@@ -4809,6 +4813,7 @@ async def my_purchases(message: Message):
         if comment:
             text += f"   Комментарий: {comment}\n"
         text += "\n"
+    
     kb = []
     nav_buttons = []
     if page > 1:
@@ -4817,6 +4822,7 @@ async def my_purchases(message: Message):
         nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"mypurchases_page_{page+1}"))
     if nav_buttons:
         kb.append(nav_buttons)
+    
     if kb:
         await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     else:
@@ -4825,7 +4831,7 @@ async def my_purchases(message: Message):
 @dp.callback_query_handler(lambda c: c.data.startswith("mypurchases_page_"))
 async def mypurchases_page_callback(callback: CallbackQuery):
     page = int(callback.data.split("_")[2])
-    callback.message.text = f"💰 Мои покупки {page}"
+    # Создаём новое сообщение с обновлённой страницей
     await my_purchases(callback.message)
     await callback.answer()
 
