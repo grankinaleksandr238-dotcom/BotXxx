@@ -9098,7 +9098,7 @@ async def settings_back_callback(callback: CallbackQuery):
     category = callback.data.split("_", 2)[2]
     await callback.message.delete()
     await settings_menu(callback.message)
-    await callback.answerbackQuery):
+    await callback.answer()
     category = callback.data.split("_", 2)[2]
     await callback.message.delete()
     await settings_menu(callback.message)
