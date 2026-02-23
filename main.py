@@ -4751,15 +4751,15 @@ async def buy_callback(callback: CallbackQuery):
         phrase = "✅ Куплено! Админ скоро свяжется."
         await callback.answer(f"✅ Ты купил {name}! {phrase}", show_alert=True)
 
-        if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
-    user = callback.from_user
-    chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
-    await notify_chats(chat_phrase)
+                if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
+            user = callback.from_user
+            chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
+            await notify_chats(chat_phrase)
 
-asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))  # ⬅️ 8 пробелов
-await send_with_media(user_id, f"✅ Покупка совершена! {phrase}", media_key='purchase')
-await callback.message.delete()
-await callback.answer()
+        asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
+        await send_with_media(user_id, f"✅ Покупка совершена! {phrase}", media_key='purchase')
+        await callback.message.delete()
+        await callback.answer()
 
 async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
     admins = SUPER_ADMINS.copy()
