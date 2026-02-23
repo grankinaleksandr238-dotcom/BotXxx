@@ -4306,7 +4306,7 @@ async def shop_handler(message: Message):
         stock_info = f" (в наличии: {stock})" if stock != -1 else ""
         text += f"🔹 {name}\n{desc}\n💰 {price:.2f} баксов{stock_info}\n\n"
         button_text = f"Купить {name}"
-        kb.append([InlineKeyboardButton(text=button_text, callback_data=f"buy_{item_id}")])
+        kb.append([InlineKeyboardButton(text=button_text, callback_data=f"buy_item_{item_id}")])
     nav_buttons = []
     if page > 1:
         nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"shop_page_{page-1}"))
