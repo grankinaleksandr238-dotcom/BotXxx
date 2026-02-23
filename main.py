@@ -4756,9 +4756,10 @@ async def buy_callback(callback: CallbackQuery):
             chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
             await notify_chats(chat_phrase)
 
-        asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
+                asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
         await send_with_media(user_id, f"✅ Покупка совершена! {phrase}", media_key='purchase')
         await callback.message.delete()
+        await callback.answer()  # ✅ ВОТ ЭТО РЕШЕНИЕ!
     except Exception as e:
         logging.error(f"Purchase error: {e}")
         await callback.answer("❌ Ошибка при покупке. Попробуй позже.", show_alert=True)
