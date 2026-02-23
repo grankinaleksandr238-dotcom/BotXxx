@@ -9074,7 +9074,7 @@ async def settings_category_handler(message: Message):
         kb_params.append((key, desc))
 
     kb = settings_param_keyboard(kb_params, category)
-    await message.answer(text, reply}: <code>{value}</code>\n"
+    await message.answer(text, reply_markup=kb)
         kb_params.append((key, desc))
 
     kb = settings_param_keyboard(kb_params, category)
