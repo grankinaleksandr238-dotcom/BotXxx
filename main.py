@@ -9099,10 +9099,7 @@ async def settings_back_callback(callback: CallbackQuery):
     await callback.message.delete()
     await settings_menu(callback.message)
     await callback.answer()
-    category = callback.data.split("_", 2)[2]
-    await callback.message.delete()
-    await settings_menu(callback.message)
-    await callback.answer()
+    
 
 @dp.callback_query_handler(lambda c: c.data.startswith("edit_"))
 async def edit_setting_start(callback: CallbackQuery, state: FSMContext):
