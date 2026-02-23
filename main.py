@@ -4646,6 +4646,7 @@ async def process_roulette_repeat(user_id: int, amount: float, bet_type: str, nu
     await message.answer(phrase, reply_markup=repeat_bet_keyboard('roulette'))
 
 # ==================== МАГАЗИН ПОДАРКОВ ====================
+# ==================== МАГАЗИН ПОДАРКОВ ====================
 @dp.message_handler(lambda message: message.text == "🛒 Магазин подарков")
 async def shop_handler(message: Message):
     if message.chat.type != 'private':
@@ -4699,10 +4700,10 @@ async def shop_handler(message: Message):
 @dp.callback_query_handler(lambda c: c.data.startswith("shop_page_"))
 async def shop_page_callback(callback: CallbackQuery):
     page = int(callback.data.split("_")[2])
-    callback.message.text = f"🛒 Магазин подарков {page}"
     await shop_handler(callback.message)
     await callback.answer()
 
+# ==================== ПОКУПКА ТОВАРА ====================
 @dp.callback_query_handler(lambda c: c.data.startswith("buyproduct_"))
 async def buy_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
@@ -4751,7 +4752,7 @@ async def buy_callback(callback: CallbackQuery):
         phrase = "✅ Куплено! Админ скоро свяжется."
         await callback.answer(f"✅ Ты купил {name}! {phrase}", show_alert=True)
 
-                if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
+        if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
             user = callback.from_user
             chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
             await notify_chats(chat_phrase)
@@ -4761,6 +4762,10 @@ async def buy_callback(callback: CallbackQuery):
         await callback.message.delete()
         await callback.answer()
 
+    except Exception as e:
+        logging.error(f"Purchase error: {e}")
+        await callback.answer("❌ Ошибка при покупке. Попробуй позже.", show_alert=True)
+
 async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
     admins = SUPER_ADMINS.copy()
     async with db_pool.acquire() as conn:
@@ -4769,6 +4774,7 @@ async def notify_admins_about_purchase(user: types.User, item_name: str, price: 
     text = f"🛍 Новая покупка!\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} баксов"
     for admin_id in admins:
         await safe_send_message(admin_id, text)
+    
 
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message_handler(lambda message: message.text == "💰 Мои покупки")
