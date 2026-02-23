@@ -2710,7 +2710,7 @@ def business_buy_keyboard(business_types: List[dict]):
             text=f"{bt['emoji']} {bt['name']} – {bt['base_price_btc']} BTC",
             callback_data=f"bizbuy_{bt['id']}"
         )])
-    kb.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="bizbuy_cancel"
+    kb.append([InlineKeyboardButton(text="◀️ Отмена", callback_data="bizbuy_cancel")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def giveaways_user_keyboard():
