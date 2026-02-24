@@ -61,7 +61,15 @@ REDIS_URL = os.getenv("REDIS_URL")
 if not REDIS_URL:
     raise ValueError("REDIS_URL не задан. Для работы бота необходим Redis.")
 import redis.asyncio as redis
-redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+import logging
+
+try:
+    redis_client = redis.from_url(REDIS_URL, decode_responses=True)
+    logging.info(f"✅ Redis подключен к {REDIS_URL.split('@')[1] if '@' in REDIS_URL else REDIS_URL}")
+except Exception as e:
+    logging.error(f"❌ Ошибка подключения к Redis: {e}")
+    logging.error(f"REDIS_URL: {REDIS_URL}")
+    raise
 
 # Парсим REDIS_URL для FSM storage
 parsed_redis = urlparse(REDIS_URL)
