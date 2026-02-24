@@ -60,8 +60,8 @@ if "sslmode" not in DATABASE_URL:
 REDIS_URL = os.getenv("REDIS_URL")
 if not REDIS_URL:
     raise ValueError("REDIS_URL не задан. Для работы бота необходим Redis.")
-import aioredis
-redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+import redis.asyncio as redis
+redis_client = redis.from_url(REDIS_URL, decode_responses=True)
 
 # Парсим REDIS_URL для FSM storage
 parsed_redis = urlparse(REDIS_URL)
