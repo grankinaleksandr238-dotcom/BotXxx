@@ -7412,11 +7412,24 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
 async def admin_panel(message: Message):
     if message.chat.type != 'private':
         return
-    if not await is_admin(message.from_user.id):
-        await message.answer("У тебя нет прав администратора.")
+    user_id = message.from_user.id
+    print(f"🔍 Админка: пользователь {user_id}")
+    print(f"🔍 is_super_admin: {await is_super_admin(user_id)}")
+    print(f"🔍 is_junior_admin: {await is_junior_admin(user_id)}")
+    print(f"🔍 is_admin: {await is_admin(user_id)}")
+    
+    if not await is_admin(user_id):
+        await message.answer("❌ У тебя нет прав администратора.")
         return
-    permissions = await get_admin_permissions(message.from_user.id)
-    await send_with_media(message.chat.id, "Панель администратора:", media_key='admin', reply_markup=admin_main_keyboard(permissions))
+    
+    try:
+        permissions = await get_admin_permissions(user_id)
+        print(f"🔍 permissions: {permissions}")
+        await send_with_media(message.chat.id, "Панель администратора:", media_key='admin', reply_markup=admin_main_keyboard(permissions))
+        print("✅ Админка успешно открыта")
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        await message.answer(f"❌ Ошибка: {e}")
 
 @dp.message(F.text == "◀️ Назад в админку")
 async def back_to_admin(message: Message):
