@@ -2718,8 +2718,9 @@ class CreateGiveaway(StatesGroup):
     description = State()
     condition_type = State()  # 'time' or 'participants'
     end_date = State()        # если time, то дата; если participants, то число участников
-    media = State()
     min_participants = State() # если condition_type = 'participants', то это минимальное кол-во
+    winners_count = State()   # количество победителей (ОБЯЗАТЕЛЬНО ДОБАВИТЬ)
+    media = State()
 
 class AddChannel(StatesGroup):
     chat_id = State()
