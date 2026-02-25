@@ -796,8 +796,14 @@ class GlobalCooldownMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 # Мидлвари будут зарегистрированы в конце файла после определения всех функций
-
 # ==================== ФУНКЦИИ ПРОВЕРКИ ПРАВ ====================
+async def is_super_admin(user_id: int) -> bool:
+    try:
+        return user_id in SUPER_ADMINS
+    except Exception as e:
+        logging.error(f"Ошибка в is_super_admin: {e}")
+        return False
+
 async def is_admin(user_id: int) -> bool:
     return await is_super_admin(user_id) or await is_junior_admin(user_id)
 
@@ -841,6 +847,9 @@ async def update_admin_permissions(user_id: int, permissions: List[str]):
             "UPDATE admins SET permissions=$1 WHERE user_id=$2",
             json.dumps(permissions), user_id
         )
+
+
+
 
 # ==================== БЕЗОПАСНАЯ ОТПРАВКА ====================
 async def safe_send_message(user_id: int, text: str, **kwargs):
