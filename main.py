@@ -842,17 +842,21 @@ async def auto_delete_command(message: Message, text: str = None, **kwargs):
 
 
 # ==================== ПОДКЛЮЧЕНИЕ К БД ====================
-async def create_db_pool(retries: int = 5, delay: int = 3):
+# ==================== ПОДКЛЮЧЕНИЕ К БД ====================
+async def create_db_pool(retries: int = 10, delay: int = 5):
     global db_pool
     for attempt in range(1, retries + 1):
         try:
             db_pool = await asyncpg.create_pool(
                 DATABASE_URL,
-                min_size=5,
-                max_size=20,
-                command_timeout=300,
+                min_size=2,
+                max_size=10,
+                command_timeout=600,
                 max_queries=50000,
-                max_inactive_connection_lifetime=60
+                max_inactive_connection_lifetime=30,
+                timeout=60,
+                statement_cache_size=0,
+                max_cached_statement_lifetime=0
             )
             logging.info(f"✅ Подключение к PostgreSQL установлено (попытка {attempt})")
             return
@@ -863,6 +867,16 @@ async def create_db_pool(retries: int = 5, delay: int = 3):
             else:
                 raise
 
+async def ensure_db_connection():
+    """Проверяет соединение с БД и переподключается при необходимости"""
+    global db_pool
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("SELECT 1")
+    except Exception as e:
+        logging.error(f"Потеряно соединение с БД: {e}. Переподключаюсь...")
+        await db_pool.close()
+        await create_db_pool()
 # ==================== ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ ====================
 async def init_db():
     async with db_pool.acquire() as conn:
