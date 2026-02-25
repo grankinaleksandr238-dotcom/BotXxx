@@ -3078,6 +3078,16 @@ class SellBitcoin(StatesGroup):
 class CancelBitcoinOrder(StatesGroup):
     order_id = State()
 
+# !!! ДОБАВИТЬ ЭТИ ДВА КЛАССА !!!
+class BuyFromPrice(StatesGroup):
+    """Состояние для покупки по конкретной цене из стакана"""
+    amount = State()
+
+class SellToPrice(StatesGroup):
+    """Состояние для продажи по конкретной цене из стакана"""
+    amount = State()
+# ---------------------------------
+
 # Для покупки по цене (BuyFromPrice) и продажи по цене (SellToPrice) не нужны отдельные состояния,
 # т.к. они используют данные из callback и сохраняют в data.
 
