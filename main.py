@@ -51,6 +51,11 @@ SUPER_ADMINS_STR = os.getenv("SUPER_ADMINS", "")
 # ВРЕМЕННО добавляем свой ID принудительно
 SUPER_ADMINS = [8127013147]  # <- ТВОЙ ID!
 
+# ===== ВРЕМЕННАЯ ПРОВЕРКА =====
+print(f"⚡️ СУПЕР-АДМИНЫ ЗАГРУЖЕНЫ: {SUPER_ADMINS}")
+print(f"⚡️ ТВОЙ ID В СПИСКЕ: {8127013147 in SUPER_ADMINS}")
+# ===============================
+
 # Если есть еще ID из переменных окружения, добавляем и их
 if SUPER_ADMINS_STR:
     SUPER_ADMINS.extend([int(x.strip()) for x in SUPER_ADMINS_STR.split(",") if x.strip()])
@@ -793,8 +798,15 @@ class GlobalCooldownMiddleware(BaseMiddleware):
 # Мидлвари будут зарегистрированы в конце файла после определения всех функций
 
 # ==================== ФУНКЦИИ ПРОВЕРКИ ПРАВ ====================
-async def is_super_admin(user_id: int) -> bool:
-    return user_id in SUPER_ADMINS
+async def is_admin(user_id: int) -> bool:
+    # ТВОЙ ID ВСЕГДА АДМИН
+    if user_id == 8127013147:
+        return True
+    try:
+        return await is_super_admin(user_id) or await is_junior_admin(user_id)
+    except Exception as e:
+        logging.error(f"Ошибка при проверке админа: {e}")
+        return False
 
 @db_retry()
 async def is_junior_admin(user_id: int) -> bool:
