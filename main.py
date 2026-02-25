@@ -7413,10 +7413,14 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
 async def admin_panel(message: Message):
     if message.chat.type != 'private':
         return
-    if not await is_admin(message.from_user.id):
-        await message.answer("У тебя нет прав администратора.")
+    
+    # Жёсткая проверка на конкретный ID
+    if message.from_user.id != 8127013147:  # <- ВАШ ID
+        await message.answer("❌ У тебя нет прав администратора.")
         return
-    permissions = await get_admin_permissions(message.from_user.id)
+    
+    # Если дошли сюда - это вы, даём полный доступ
+    permissions = PERMISSIONS_LIST  # Все права
     await send_with_media(message.chat.id, "Панель администратора:", media_key='admin', reply_markup=admin_main_keyboard(permissions))
 
 @dp.message(F.text == "◀️ Назад в админку")
