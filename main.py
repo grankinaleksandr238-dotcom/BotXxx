@@ -8093,7 +8093,7 @@ async def purchase_reject(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введи причину отказа (или отправь '-'):", reply_markup=back_keyboard())
     await state.set_state("purchase_reject_comment")  # строковое состояние допустимо, но лучше создать класс
 
-@dp.message(state="purchase_reject_comment", F.text)
+@dp.message(F.text, state="purchase_reject_comment")
 async def purchase_reject_comment(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
