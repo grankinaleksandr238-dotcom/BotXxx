@@ -877,6 +877,25 @@ async def ensure_db_connection():
         logging.error(f"Потеряно соединение с БД: {e}. Переподключаюсь...")
         await db_pool.close()
         await create_db_pool()
+
+# ==================== ПИНГ БД (держит соединение живым) ====================
+async def keep_db_alive():
+    """Периодически пингует БД, чтобы соединение не закрывалось"""
+    while True:
+        try:
+            await asyncio.sleep(30)  # каждые 30 секунд
+            async with db_pool.acquire() as conn:
+                await conn.execute("SELECT 1")
+                logging.debug("Пинг БД выполнен успешно")
+        except Exception as e:
+            logging.error(f"Ошибка при пинге БД: {e}")
+            # Пытаемся переподключиться
+            try:
+                if db_pool:
+                    await db_pool.close()
+                await create_db_pool()
+            except:
+                pass
 # ==================== ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ ====================
 async def init_db():
     async with db_pool.acquire() as conn:
@@ -10444,10 +10463,13 @@ async def on_startup():
         types.BotCommand(command="mlb_heist", description="💰 Статус налёта"),
         types.BotCommand(command="myheist", description="📊 Мой текущий налёт"),
     ])
-
+    
+    # Запускаем пинг БД (новая строка)
+    asyncio.create_task(keep_db_alive())
+    
     # Восстанавливаем незавершённые налёты
     await recover_heists()
-
+    
     # Запускаем фоновые задачи
     asyncio.create_task(heist_spawner())
     asyncio.create_task(process_smuggle_runs())
@@ -10457,6 +10479,8 @@ async def on_startup():
     asyncio.create_task(business_expiration_checker())
 
     logging.info("✅ Бот запущен!")
+
+    
 
 async def on_shutdown():
     """Действия при остановке бота."""
