@@ -16,7 +16,7 @@ from collections import defaultdict
 from functools import lru_cache, wraps
 
 import asyncpg
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
