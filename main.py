@@ -798,6 +798,7 @@ class GlobalCooldownMiddleware(BaseMiddleware):
 # Мидлвари будут зарегистрированы в конце файла после определения всех функций
 # ==================== ФУНКЦИИ ПРОВЕРКИ ПРАВ ====================
 async def is_super_admin(user_id: int) -> bool:
+    print(f"🔥 is_super_admin вызвана с user_id={user_id}")  # <--- ДОБАВЬ ЭТО
     try:
         return user_id in SUPER_ADMINS
     except Exception as e:
