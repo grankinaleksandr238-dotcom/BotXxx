@@ -6823,6 +6823,7 @@ async def chat_gift(message: Message):
 
 # ==================== КОНЕЦ ЧАСТИ 4 ====================
 # ==================== ЧАСТЬ 5: АДМИНИСТРАТИВНАЯ ПАНЕЛЬ (ФИНАЛЬНАЯ ИСПРАВЛЕННАЯ) ====================
+# ==================== ЧАСТЬ 5: АДМИНИСТРАТИВНАЯ ПАНЕЛЬ (ФИНАЛЬНАЯ РАБОЧАЯ ВЕРСИЯ) ====================
 
 import asyncio
 import io
@@ -8091,8 +8092,8 @@ async def purchase_reject(callback: CallbackQuery, state: FSMContext):
     await callback.message.answer("Введи причину отказа (или отправь '-'):", reply_markup=back_keyboard())
     await state.set_state("purchase_reject_comment")
 
-# ИСПРАВЛЕНО: позиционный аргумент F.text теперь перед именованным state
-@dp.message(F.text, state="purchase_reject_comment")
+# ИСПРАВЛЕНО: используем StateFilter
+@dp.message(StateFilter("purchase_reject_comment"), F.text)
 async def purchase_reject_comment(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9413,8 +9414,8 @@ async def edit_giveaway_start(callback: CallbackQuery, state: FSMContext):
     )
     await state.set_state("edit_giveaway_field")
 
-# ИСПРАВЛЕНО: все декораторы для редактирования розыгрышей
-@dp.message(F.text, state="edit_giveaway_field")
+# ИСПРАВЛЕНО: все декораторы для редактирования розыгрышей используют StateFilter
+@dp.message(StateFilter("edit_giveaway_field"), F.text)
 async def edit_giveaway_field(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9446,7 +9447,7 @@ async def edit_giveaway_field(message: Message, state: FSMContext):
         await state.clear()
         await admin_active_giveaways(message)
 
-@dp.message(F.text, state="edit_giveaway_prize")
+@dp.message(StateFilter("edit_giveaway_prize"), F.text)
 async def edit_giveaway_prize(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9460,7 +9461,7 @@ async def edit_giveaway_prize(message: Message, state: FSMContext):
     await state.clear()
     await admin_active_giveaways(message)
 
-@dp.message(F.text, state="edit_giveaway_description")
+@dp.message(StateFilter("edit_giveaway_description"), F.text)
 async def edit_giveaway_description(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9474,7 +9475,7 @@ async def edit_giveaway_description(message: Message, state: FSMContext):
     await state.clear()
     await admin_active_giveaways(message)
 
-@dp.message(F.text, state="edit_giveaway_end_date")
+@dp.message(StateFilter("edit_giveaway_end_date"), F.text)
 async def edit_giveaway_end_date(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9493,7 +9494,7 @@ async def edit_giveaway_end_date(message: Message, state: FSMContext):
     await state.clear()
     await admin_active_giveaways(message)
 
-@dp.message(F.text, state="edit_giveaway_min_participants")
+@dp.message(StateFilter("edit_giveaway_min_participants"), F.text)
 async def edit_giveaway_min_participants(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9514,7 +9515,7 @@ async def edit_giveaway_min_participants(message: Message, state: FSMContext):
     await state.clear()
     await admin_active_giveaways(message)
 
-@dp.message(F.text, state="edit_giveaway_winners_count")
+@dp.message(StateFilter("edit_giveaway_winners_count"), F.text)
 async def edit_giveaway_winners_count(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -9535,7 +9536,7 @@ async def edit_giveaway_winners_count(message: Message, state: FSMContext):
     await state.clear()
     await admin_active_giveaways(message)
 
-@dp.message(F.photo | F.text, state="edit_giveaway_media")
+@dp.message(StateFilter("edit_giveaway_media"), F.photo | F.text)
 async def edit_giveaway_media(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
@@ -10065,6 +10066,7 @@ async def cleanup_old_data(message: Message):
     await perform_cleanup(manual=True)
     await message.answer("✅ Старые записи очищены согласно настройкам.")
 
+# ==================== КОНЕЦ ЧАСТИ 5 ====================
 # ==================== КОНЕЦ ЧАСТИ 5 ====================
 # ==================== ЧАСТЬ 6: ФОНОВЫЕ ЗАДАЧИ И ЗАПУСК ====================
 # Полностью переписано для aiogram 3.x. Все ошибки исправлены.
