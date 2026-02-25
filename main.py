@@ -48,7 +48,12 @@ if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не задан в переменных окружения")
 
 SUPER_ADMINS_STR = os.getenv("SUPER_ADMINS", "")
-SUPER_ADMINS = [int(x.strip()) for x in SUPER_ADMINS_STR.split(",") if x.strip()]
+# ВРЕМЕННО добавляем свой ID принудительно
+SUPER_ADMINS = [8127013147]  # <- ТВОЙ ID!
+
+# Если есть еще ID из переменных окружения, добавляем и их
+if SUPER_ADMINS_STR:
+    SUPER_ADMINS.extend([int(x.strip()) for x in SUPER_ADMINS_STR.split(",") if x.strip()])
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
