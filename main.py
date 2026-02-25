@@ -708,6 +708,57 @@ JAIL_FAIL_PHRASES = [
     "📖 {name} (@{username}) читал уголовный кодекс вслух, все уснули. 0 авторитета. (Камера {cell}, статья {article})"
 ]
 
+# ==================== ФУНКЦИИ ПРОВЕРКИ ПРАВ ====================
+async def is_super_admin(user_id: int) -> bool:
+    try:
+        return user_id in SUPER_ADMINS
+    except Exception as e:
+        logging.error(f"Ошибка в is_super_admin: {e}")
+        return False
+
+async def is_admin(user_id: int) -> bool:
+    return await is_super_admin(user_id) or await is_junior_admin(user_id)
+
+@db_retry()
+async def is_junior_admin(user_id: int) -> bool:
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchval("SELECT user_id FROM admins WHERE user_id=$1", user_id)
+    return row is not None
+
+@db_retry()
+async def has_permission(user_id: int, permission: str) -> bool:
+    if await is_super_admin(user_id):
+        return True
+    async with db_pool.acquire() as conn:
+        perms_json = await conn.fetchval("SELECT permissions FROM admins WHERE user_id=$1", user_id)
+    if not perms_json:
+        return False
+    try:
+        perms = json.loads(perms_json)
+        return permission in perms
+    except:
+        return False
+
+@db_retry()
+async def get_admin_permissions(user_id: int) -> List[str]:
+    if await is_super_admin(user_id):
+        return PERMISSIONS_LIST.copy()
+    async with db_pool.acquire() as conn:
+        perms_json = await conn.fetchval("SELECT permissions FROM admins WHERE user_id=$1", user_id)
+    if not perms_json:
+        return []
+    try:
+        return json.loads(perms_json)
+    except:
+        return []
+
+@db_retry()
+async def update_admin_permissions(user_id: int, permissions: List[str]):
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE admins SET permissions=$1 WHERE user_id=$2",
+            json.dumps(permissions), user_id
+        )        
 # ==================== НАСТРОЙКА ЛОГГЕРА ====================
 logging.basicConfig(
     level=logging.INFO,
@@ -796,62 +847,6 @@ class GlobalCooldownMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 # Мидлвари будут зарегистрированы в конце файла после определения всех функций
-# ==================== ФУНКЦИИ ПРОВЕРКИ ПРАВ ====================
-async def is_super_admin(user_id: int) -> bool:
-    print(f"🔥 is_super_admin вызвана с user_id={user_id}")  # <--- ДОБАВЬ ЭТО
-    try:
-        return user_id in SUPER_ADMINS
-    except Exception as e:
-        logging.error(f"Ошибка в is_super_admin: {e}")
-        return False
-
-async def is_admin(user_id: int) -> bool:
-    return await is_super_admin(user_id) or await is_junior_admin(user_id)
-
-@db_retry()
-async def is_junior_admin(user_id: int) -> bool:
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchval("SELECT user_id FROM admins WHERE user_id=$1", user_id)
-    return row is not None
-
-@db_retry()
-async def has_permission(user_id: int, permission: str) -> bool:
-    if await is_super_admin(user_id):
-        return True
-    async with db_pool.acquire() as conn:
-        perms_json = await conn.fetchval("SELECT permissions FROM admins WHERE user_id=$1", user_id)
-    if not perms_json:
-        return False
-    try:
-        perms = json.loads(perms_json)
-        return permission in perms
-    except:
-        return False
-
-@db_retry()
-async def get_admin_permissions(user_id: int) -> List[str]:
-    if await is_super_admin(user_id):
-        return PERMISSIONS_LIST.copy()
-    async with db_pool.acquire() as conn:
-        perms_json = await conn.fetchval("SELECT permissions FROM admins WHERE user_id=$1", user_id)
-    if not perms_json:
-        return []
-    try:
-        return json.loads(perms_json)
-    except:
-        return []
-
-@db_retry()
-async def update_admin_permissions(user_id: int, permissions: List[str]):
-    async with db_pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE admins SET permissions=$1 WHERE user_id=$2",
-            json.dumps(permissions), user_id
-        )
-
-
-
-
 # ==================== БЕЗОПАСНАЯ ОТПРАВКА ====================
 async def safe_send_message(user_id: int, text: str, **kwargs):
     try:
