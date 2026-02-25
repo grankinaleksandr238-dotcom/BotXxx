@@ -1317,7 +1317,7 @@ async def init_db():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_smuggle_runs_user ON smuggle_runs(user_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_smuggle_runs_end ON smuggle_runs(end_time)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_businesses_user ON user_businesses(user_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_businesses_expires ON user_businesses(expires_at) WHERE expires_at IS NOT NULL")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_user_businesses_expires ON user_businesses(expires_at)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_heists_chat_status ON heists(chat_id, status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_heists_join_until ON heists(join_until)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_heists_split_until ON heists(split_until)")
