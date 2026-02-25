@@ -840,6 +840,7 @@ async def auto_delete_command(message: Message, text: str = None, **kwargs):
         sent = await message.answer(text, **kwargs)
         asyncio.create_task(delete_after(sent, delete_seconds))
 
+
 # ==================== ПОДКЛЮЧЕНИЕ К БД ====================
 async def create_db_pool(retries: int = 5, delay: int = 3):
     global db_pool
@@ -847,11 +848,11 @@ async def create_db_pool(retries: int = 5, delay: int = 3):
         try:
             db_pool = await asyncpg.create_pool(
                 DATABASE_URL,
-                min_size=10,
-                max_size=50,
-                command_timeout=60,
+                min_size=5,
+                max_size=20,
+                command_timeout=300,
                 max_queries=50000,
-                max_inactive_connection_lifetime=300
+                max_inactive_connection_lifetime=60
             )
             logging.info(f"✅ Подключение к PostgreSQL установлено (попытка {attempt})")
             return
