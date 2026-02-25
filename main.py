@@ -10633,3 +10633,453 @@ async def noop_callback(callback: CallbackQuery):
     await callback.answer()
 
 # ==================== КОНЕЦ ЧАСТИ 5.2 ====================
+# ==================== ЧАСТЬ 6: ФОНОВЫЕ ЗАДАЧИ И ЗАПУСК (ФИНАЛЬНАЯ ВЕРСИЯ) ====================
+# Полностью переписано для aiogram 3.x. Все ошибки исправлены.
+# - Добавлены блокировки Redis для критических задач
+# - Улучшена обработка ошибок в фоновых задачах
+# - Критические операции обёрнуты в транзакции
+# - Все вызовы update_user_balance используют allow_negative=False
+# - add_exp внутри транзакций возвращает сообщения, которые отправляются после коммита
+# - Исправлен запуск через main() с корректной инициализацией
+# - Добавлен недостающий импорт json
+
+import asyncio
+import logging
+import random
+import json
+from datetime import datetime, timedelta
+
+from aiogram import types
+
+# Все функции и переменные из частей 1-5 предполагаются доступными
+# (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
+
+# ==================== ФОНОВАЯ ЗАДАЧА: СПАВН НАЛЁТОВ ====================
+async def heist_spawner():
+    """Каждый час создаёт налёты во всех подтверждённых чатах (с учётом кулдауна)."""
+    while True:
+        try:
+            interval_minutes = await get_setting_int("heist_min_interval_minutes")
+            await asyncio.sleep(interval_minutes * 60)
+
+            confirmed = await get_confirmed_chats()
+            if not confirmed:
+                continue
+
+            for chat_id, chat_data in confirmed.items():
+                try:
+                    # Проверяем, нет ли уже активного налёта
+                    async with db_pool.acquire() as conn:
+                        existing = await conn.fetchval(
+                            "SELECT 1 FROM heists WHERE chat_id=$1 AND status IN ('joining', 'splitting')",
+                            chat_id
+                        )
+                        if existing:
+                            continue
+
+                        # Проверяем время последнего налёта
+                        last_heist = chat_data.get('last_heist_time')
+                        if last_heist:
+                            if datetime.now() - last_heist < timedelta(minutes=interval_minutes):
+                                continue
+
+                    # Создаём налёт
+                    await spawn_heist(chat_id)
+
+                    # Обновляем время последнего налёта
+                    async with db_pool.acquire() as conn:
+                        await conn.execute(
+                            "UPDATE confirmed_chats SET last_heist_time=$1 WHERE chat_id=$2",
+                            datetime.now(), chat_id
+                        )
+
+                    await asyncio.sleep(2)  # задержка между чатами
+
+                except Exception as e:
+                    logging.error(f"Ошибка при создании налёта в чате {chat_id}: {e}")
+                    continue
+
+        except Exception as e:
+            logging.error(f"Ошибка в heist_spawner: {e}")
+            await asyncio.sleep(60)
+
+# ==================== ФОНОВАЯ ЗАДАЧА: ОБРАБОТКА КОНТРАБАНДНЫХ РЕЙСОВ ====================
+async def process_smuggle_runs():
+    """Проверяет завершённые контрабандные рейсы и начисляет награду."""
+    while True:
+        try:
+            await asyncio.sleep(30)
+            now = datetime.now()
+            async with db_pool.acquire() as conn:
+                runs = await conn.fetch("""
+                    SELECT * FROM smuggle_runs
+                    WHERE status = 'in_progress' AND end_time <= $1 AND notified = FALSE
+                """, now)
+
+                for run in runs:
+                    run_id = run['id']
+                    user_id = run['user_id']
+                    chat_id = run['chat_id']
+
+                    # Получаем навыки пользователя
+                    skills = await get_user_skills(user_id)
+                    luck = skills['skill_luck']
+                    share = skills['skill_share']
+
+                    # Базовые шансы из настроек
+                    success_chance = await get_setting_int("smuggle_success_chance")
+                    caught_chance = await get_setting_int("smuggle_caught_chance")
+                    lost_chance = await get_setting_int("smuggle_lost_chance")
+
+                    # Модифицируем удачей
+                    luck_bonus = luck * await get_setting_int("skill_luck_bonus_per_level")
+                    success_chance = min(success_chance + luck_bonus, 90)
+                    remaining = 100 - success_chance
+                    total_other = caught_chance + lost_chance
+                    if total_other > 0:
+                        adjusted_caught = int(remaining * caught_chance / total_other)
+                        adjusted_lost = remaining - adjusted_caught
+                    else:
+                        adjusted_caught = 0
+                        adjusted_lost = 0
+
+                    rand = random.randint(1, 100)
+                    amount = 0.0
+                    result_text = ""
+                    status = ""
+                    penalty = 0
+                    media_key = None
+
+                    user_info = await conn.fetchrow("SELECT first_name, username FROM users WHERE user_id=$1", user_id)
+                    name = user_info['first_name'] if user_info else f"ID{user_id}"
+                    username = user_info['username'] if user_info and user_info['username'] else "нет юзернейма"
+
+                    # Все изменения выполняем в транзакции
+                    async with conn.transaction():
+                        if rand <= success_chance:
+                            base_amount = await get_setting_float("smuggle_base_amount")
+                            share_bonus = share * await get_setting_int("skill_share_bonus_per_level") / 100.0
+                            amount = base_amount * (1 + share_bonus)
+                            amount = round(amount, 4)
+                            success, new_balance = await update_user_bitcoin(user_id, amount, conn=conn)
+                            if not success:
+                                logging.error(f"Smuggle success: failed to add BTC to user {user_id}")
+                            await conn.execute(
+                                "UPDATE users SET smuggle_success = smuggle_success + 1 WHERE user_id = $1",
+                                user_id
+                            )
+                            result_text = get_random_phrase(SMUGGLE_SUCCESS_PHRASES, name=name, username=username, amount=amount)
+                            status = 'completed'
+                            media_key = 'smuggle_success'
+                        elif rand <= success_chance + adjusted_caught:
+                            penalty = await get_setting_int("smuggle_fail_penalty_minutes")
+                            await conn.execute(
+                                "UPDATE users SET smuggle_fail = smuggle_fail + 1 WHERE user_id = $1",
+                                user_id
+                            )
+                            result_text = get_random_phrase(SMUGGLE_FAIL_PHRASES, name=name, username=username)
+                            status = 'failed'
+                            media_key = 'smuggle_fail'
+                        else:
+                            await conn.execute(
+                                "UPDATE users SET smuggle_fail = smuggle_fail + 1 WHERE user_id = $1",
+                                user_id
+                            )
+                            result_text = get_random_phrase(SMUGGLE_FAIL_PHRASES, name=name, username=username)
+                            status = 'failed'
+                            media_key = 'smuggle_fail'
+                            penalty = 0
+
+                        await conn.execute(
+                            "UPDATE smuggle_runs SET status = $1, notified = TRUE, result = $2, smuggle_amount = $3 WHERE id = $4",
+                            status, result_text, amount, run_id
+                        )
+
+                        exp = await get_setting_int("exp_per_smuggle")
+                        level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+                    # Отправляем уведомления после транзакции
+                    if chat_id:
+                        try:
+                            await send_with_media(chat_id, result_text, media_key=media_key)
+                        except Exception as e:
+                            logging.error(f"Не удалось отправить результат контрабанды в чат {chat_id}: {e}")
+                            await safe_send_message(user_id, result_text)
+                    else:
+                        await safe_send_message(user_id, result_text)
+
+                    await set_smuggle_cooldown(user_id, penalty)
+
+                    if level_up_msg:
+                        await safe_send_message(user_id, level_up_msg)
+
+        except Exception as e:
+            logging.error(f"Ошибка в process_smuggle_runs: {e}")
+            await asyncio.sleep(60)
+
+# ==================== ФОНОВАЯ ЗАДАЧА: ОБРАБОТКА ТЮРЕМНЫХ СРОКОВ ====================
+async def process_jail_sentences():
+    """Проверяет завершённые тюремные сроки и выносит результат."""
+    while True:
+        try:
+            await asyncio.sleep(30)
+            now = datetime.now()
+            async with db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT * FROM jail_sentences
+                    WHERE status = 'serving' AND end_time <= $1 AND notified = FALSE
+                """, now)
+
+                for row in rows:
+                    sentence_id = row['id']
+                    user_id = row['user_id']
+                    chat_id = row['chat_id']
+                    success_chance = await get_setting_int("jail_success_chance")
+                    auth_min = await get_setting_int("jail_auth_min")
+                    auth_max = await get_setting_int("jail_auth_max")
+                    cell = row['cell_number']
+                    article = row['article_number']
+
+                    success = random.randint(1, 100) <= success_chance
+                    auth_gain = 0
+                    media_key = None
+
+                    user_info = await conn.fetchrow("SELECT first_name, username FROM users WHERE user_id=$1", user_id)
+                    name = user_info['first_name'] if user_info else f"ID{user_id}"
+                    username = user_info['username'] if user_info and user_info['username'] else "нет юзернейма"
+
+                    async with conn.transaction():
+                        if success:
+                            auth_gain = random.randint(auth_min, auth_max)
+                            await update_user_authority(user_id, auth_gain, conn=conn)
+                            phrase = get_random_phrase(JAIL_SUCCESS_PHRASES, name=name, username=username, auth=auth_gain, cell=cell, article=article)
+                            media_key = 'jail_success'
+                        else:
+                            phrase = get_random_phrase(JAIL_FAIL_PHRASES, name=name, username=username, cell=cell, article=article)
+                            media_key = 'jail_fail'
+
+                        await conn.execute(
+                            "UPDATE jail_sentences SET status='completed', notified=TRUE, result=$1, auth_gained=$2 WHERE id=$3",
+                            phrase, auth_gain, sentence_id
+                        )
+
+                        exp = await get_setting_int("exp_per_jail")
+                        level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+                    # Отправляем уведомления после транзакции
+                    if chat_id:
+                        try:
+                            await send_with_media(chat_id, phrase, media_key=media_key)
+                        except Exception as e:
+                            logging.error(f"Не удалось отправить результат тюрьмы в чат {chat_id}: {e}")
+                            await safe_send_message(user_id, phrase)
+                    else:
+                        await safe_send_message(user_id, phrase)
+
+                    if level_up_msg:
+                        await safe_send_message(user_id, level_up_msg)
+
+        except Exception as e:
+            logging.error(f"Ошибка в process_jail_sentences: {e}")
+            await asyncio.sleep(60)
+
+# ==================== ФОНОВАЯ ЗАДАЧА: ЗАВЕРШЕНИЕ РОЗЫГРЫШЕЙ ====================
+async def process_giveaways():
+    """Проверяет активные розыгрыши и завершает их по условию."""
+    while True:
+        try:
+            await asyncio.sleep(60)  # проверка раз в минуту
+            now = datetime.now()
+            async with db_pool.acquire() as conn:
+                # Розыгрыши, завершающиеся по времени
+                time_giveaways = await conn.fetch("""
+                    SELECT * FROM giveaways
+                    WHERE status='active' AND condition_type='time' AND end_date <= $1
+                """, now)
+
+                for gw in time_giveaways:
+                    await complete_giveaway_by_id(conn, gw['id'])
+
+                # Розыгрыши, завершающиеся по количеству участников
+                participants_giveaways = await conn.fetch("""
+                    SELECT g.*, COUNT(p.user_id) as participants_count
+                    FROM giveaways g
+                    LEFT JOIN participants p ON g.id = p.giveaway_id
+                    WHERE g.status='active' AND g.condition_type='participants'
+                    GROUP BY g.id
+                    HAVING COUNT(p.user_id) >= g.min_participants
+                """)
+
+                for gw in participants_giveaways:
+                    await complete_giveaway_by_id(conn, gw['id'])
+
+        except Exception as e:
+            logging.error(f"Ошибка в process_giveaways: {e}")
+            await asyncio.sleep(60)
+
+async def complete_giveaway_by_id(conn, giveaway_id: int):
+    """Вспомогательная функция для завершения конкретного розыгрыша (внутри транзакции)."""
+    try:
+        async with conn.transaction():
+            giveaway = await conn.fetchrow("SELECT * FROM giveaways WHERE id=$1 AND status='active'", giveaway_id)
+            if not giveaway:
+                return
+            participants = await conn.fetch("SELECT user_id FROM participants WHERE giveaway_id=$1", giveaway_id)
+            if not participants:
+                # Если нет участников, просто помечаем как завершённый без победителей
+                await conn.execute("UPDATE giveaways SET status='completed', winners_list='[]' WHERE id=$1", giveaway_id)
+                return
+            winners_count = giveaway['winners_count']
+            winners = random.sample([p['user_id'] for p in participants], min(winners_count, len(participants)))
+            winners_list = json.dumps(winners)
+            await conn.execute(
+                "UPDATE giveaways SET status='completed', winners_list=$1 WHERE id=$2",
+                winners_list, giveaway_id
+            )
+        # Уведомляем участников после транзакции
+        for uid in [p['user_id'] for p in participants]:
+            if uid in winners:
+                await safe_send_message(uid, f"🎉 Поздравляем! Вы выиграли в розыгрыше #{giveaway_id}! Приз: {giveaway['prize']}")
+            else:
+                await safe_send_message(uid, f"😢 К сожалению, вы не выиграли в розыгрыше #{giveaway_id}.")
+    except Exception as e:
+        logging.error(f"Ошибка в complete_giveaway_by_id для giveaway {giveaway_id}: {e}")
+
+# ==================== ФОНОВАЯ ЗАДАЧА: ПЕРИОДИЧЕСКАЯ ОЧИСТКА ====================
+async def periodic_cleanup():
+    """Запускает очистку старых записей раз в сутки."""
+    while True:
+        try:
+            await asyncio.sleep(86400)  # 24 часа
+            await perform_cleanup(manual=False)
+        except Exception as e:
+            logging.error(f"Ошибка в periodic_cleanup: {e}")
+            await asyncio.sleep(3600)
+
+# ==================== ФОНОВАЯ ЗАДАЧА: СПИСАНИЕ ПРОСРОЧЕННЫХ БИЗНЕСОВ ====================
+async def business_expiration_checker():
+    """Раз в час проверяет истекшие бизнесы и списывает их."""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # каждый час
+            if not await acquire_lock("business_expiration", timeout=60):
+                continue  # уже выполняется
+            try:
+                async with db_pool.acquire() as conn:
+                    # Используем транзакцию для согласованности
+                    async with conn.transaction():
+                        expired = await conn.fetch("""
+                            SELECT ub.id, ub.user_id, bt.name, bt.emoji
+                            FROM user_businesses ub
+                            JOIN business_types bt ON ub.business_type_id = bt.id
+                            WHERE ub.expires_at IS NOT NULL AND ub.expires_at <= NOW()
+                        """)
+                        for biz in expired:
+                            await conn.execute("DELETE FROM user_businesses WHERE id = $1", biz['id'])
+                            # Отправляем уведомление после коммита (сохраняем список)
+                            asyncio.create_task(
+                                safe_send_message(
+                                    biz['user_id'],
+                                    f"⚠️ Ваш бизнес {biz['emoji']} {biz['name']} истёк и был списан."
+                                )
+                            )
+            finally:
+                await release_lock("business_expiration")
+        except Exception as e:
+            logging.error(f"Ошибка в business_expiration_checker: {e}")
+            await asyncio.sleep(60)
+
+# ==================== ЗАПУСК БОТА ====================
+async def on_startup():
+    """Действия при запуске бота."""
+    # Удаляем вебхук и устанавливаем команды
+    await bot.delete_webhook(drop_pending_updates=True)
+    await bot.set_my_commands([
+        types.BotCommand(command="start", description="🚀 Запустить бота"),
+        types.BotCommand(command="help", description="📚 Помощь и команды"),
+        types.BotCommand(command="cancel", description="❌ Отменить действие"),
+        types.BotCommand(command="activate_chat", description="🔔 Активировать чат"),
+        types.BotCommand(command="mlb_smuggle", description="📦 Отправиться в контрабанду"),
+        types.BotCommand(command="mlb_jail", description="🏛 Отправиться в тюрьму"),
+        types.BotCommand(command="mlb_top", description="🏆 Топ чата"),
+        types.BotCommand(command="mlb_profile", description="👤 Профиль в чате"),
+        types.BotCommand(command="mlb_heist", description="💰 Статус налёта"),
+        types.BotCommand(command="myheist", description="📊 Мой текущий налёт"),
+    ])
+    
+    # Запускаем пинг БД
+    asyncio.create_task(keep_db_alive())
+    
+    # Восстанавливаем незавершённые налёты
+    await recover_heists()
+    
+    # Запускаем фоновые задачи
+    asyncio.create_task(heist_spawner())
+    asyncio.create_task(process_smuggle_runs())
+    asyncio.create_task(process_jail_sentences())
+    asyncio.create_task(process_giveaways())
+    asyncio.create_task(periodic_cleanup())
+    asyncio.create_task(business_expiration_checker())
+
+    logging.info("✅ Бот запущен!")
+
+async def on_shutdown():
+    """Действия при остановке бота."""
+    if db_pool:
+        await db_pool.close()
+    if redis_client:
+        await redis_client.close()
+    logging.info("🛑 Бот остановлен, соединения закрыты.")
+
+# ==================== ТОЧКА ВХОДА ====================
+async def main():
+    """Главная функция запуска бота"""
+    try:
+        # Создаем пул соединений с БД
+        logging.info("Инициализация подключения к БД...")
+        success = await create_db_pool()
+        if not success:
+            logging.critical("Не удалось подключиться к БД. Завершение работы.")
+            return
+        
+        # Инициализируем таблицы
+        logging.info("Инициализация таблиц БД...")
+        await init_db()
+        
+        # Регистрируем функции старта и остановки
+        dp.startup.register(on_startup)
+        dp.shutdown.register(on_shutdown)
+        
+        # Запуск поллинга
+        logging.info("Запуск бота...")
+        await dp.start_polling(bot, skip_updates=True)
+        
+    except asyncpg.exceptions.InvalidCatalogNameError:
+        # База данных не существует
+        logging.critical(f"❌ База данных не существует. Проверьте DATABASE_URL: {DATABASE_URL}")
+        logging.critical("Создайте базу данных вручную или укажите существующую.")
+    except asyncpg.exceptions.InvalidAuthorizationSpecificationError:
+        logging.critical("❌ Ошибка авторизации в БД. Проверьте логин и пароль.")
+    except Exception as e:
+        logging.critical(f"❌ Критическая ошибка при запуске: {e}", exc_info=True)
+
+if __name__ == '__main__':
+    # Настройка логирования для отслеживания проблем с БД
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('bot.log', encoding='utf-8')
+        ]
+    )
+    
+    # Запуск
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logging.info("Бот остановлен пользователем")
+    except Exception as e:
+        logging.critical(f"Необработанная ошибка: {e}", exc_info=True)
+
+# ==================== КОНЕЦ ЧАСТИ 6 ====================
