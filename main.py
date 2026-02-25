@@ -807,9 +807,6 @@ async def is_junior_admin(user_id: int) -> bool:
         row = await conn.fetchval("SELECT user_id FROM admins WHERE user_id=$1", user_id)
     return row is not None
 
-async def is_admin(user_id: int) -> bool:
-    return await is_super_admin(user_id) or await is_junior_admin(user_id)
-
 @db_retry()
 async def has_permission(user_id: int, permission: str) -> bool:
     if await is_super_admin(user_id):
