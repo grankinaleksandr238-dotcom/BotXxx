@@ -6631,6 +6631,57 @@ async def betray_choice_callback(callback: CallbackQuery, state: FSMContext):
 
     await callback.answer("✅ Твой выбор зарегистрирован. Ожидай результатов.", show_alert=False)
     await callback.message.edit_text("✅ Твой выбор зарегистрирован. Ожидай результатов в чате.")
+
+# ==================== ОБРАБОТЧИКИ ДЛЯ ТЮРЬМЫ (ИЗ ЛС) ====================
+@dp.callback_query(JailProcess.cell, F.data.startswith("jail_cell_"))
+async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
+    cell = int(callback.data.split("_")[2])
+    await state.update_data(cell=cell)
+    await callback.message.answer("🔢 Введи номер статьи (от 1 до 300):")
+    await state.set_state(JailProcess.article)
+    await callback.answer()
+
+@dp.message(JailProcess.article, F.text)
+async def jail_article_message(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("❌ Процесс отменён.", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
+        return
+    try:
+        article = int(message.text)
+        if article < 1 or article > 300:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи целое число от 1 до 300.")
+        return
+
+    data = await state.get_data()
+    chat_id = data.get('chat_id')
+    cell = data.get('cell')
+    user_id = message.from_user.id
+
+    min_duration = await get_setting_int("jail_min_duration")
+    max_duration = await get_setting_int("jail_max_duration")
+    duration = random.randint(min_duration, max_duration)
+
+    await start_jail_sentence(user_id, chat_id, duration, cell, article)
+    name = message.from_user.first_name
+    phrase = get_random_phrase(JAIL_START_PHRASES, name=name, duration=duration)
+
+    cooldown_hours = await get_setting_int("jail_cooldown_hours")
+    await set_global_cooldown(user_id, 'jail', cooldown_hours * 3600)
+
+    if chat_id:
+        try:
+            await safe_send_chat(chat_id, phrase)
+        except Exception as e:
+            logging.error(f"Failed to send jail start to chat {chat_id}: {e}")
+            await message.answer(phrase)
+    else:
+        await message.answer(phrase)
+
+    await state.clear()
+
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
 # ==================== ЧАСТЬ 4: ГРУППОВЫЕ ХЕНДЛЕРЫ ====================
 
@@ -8681,6 +8732,39 @@ async def list_confirmed_chats(message: Message):
     for part in parts:
         await message.answer(part)
 
+# ==================== ОБРАБОТЧИКИ ИНЛАЙН-КНОПОК ДЛЯ ПОДТВЕРЖДЕНИЯ ЧАТА ====================
+@dp.callback_query(F.data.startswith("confirm_chat_"))
+async def confirm_chat_callback(callback: CallbackQuery):
+    if not await check_admin_permissions(callback.from_user.id, "manage_chats"):
+        await callback.answer("❌ Недостаточно прав.", show_alert=True)
+        return
+    chat_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+        if not request:
+            await callback.answer("❌ Запрос не найден.", show_alert=True)
+            return
+        await add_confirmed_chat(chat_id, request['title'], request['type'], callback.from_user.id)
+        await update_chat_request_status(chat_id, 'approved')
+        await callback.message.edit_text(f"✅ Чат {request['title']} подтверждён.")
+        await safe_send_message(request['requested_by'], f"✅ Ваш чат «{request['title']}» активирован!")
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("reject_chat_"))
+async def reject_chat_callback(callback: CallbackQuery):
+    if not await check_admin_permissions(callback.from_user.id, "manage_chats"):
+        await callback.answer("❌ Недостаточно прав.", show_alert=True)
+        return
+    chat_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+        if not request:
+            await callback.answer("❌ Запрос не найден.", show_alert=True)
+            return
+        await update_chat_request_status(chat_id, 'rejected')
+        await callback.message.edit_text(f"❌ Запрос для чата {request['title']} отклонён.")
+        await safe_send_message(request['requested_by'], f"❌ Запрос на активацию чата «{request['title']}» отклонён.")
+    await callback.answer()
 
 # ==================== КОНЕЦ ЧАСТИ 5.1 ====================
 # ==================== ЧАСТЬ 5.2: АДМИНИСТРАТИВНАЯ ПАНЕЛЬ (ПРОДОЛЖЕНИЕ) ====================
