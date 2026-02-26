@@ -3277,7 +3277,7 @@ def main_menu_keyboard(is_admin: bool = False):
         KeyboardButton(text="🎓 Университет")
     )
     if is_admin:
-        builder.row(KeyboardButton(text="⚙️ Админ панель"))
+        builder.row(KeyboardButton(text="🔧 Админка"))
     return builder.as_markup(resize_keyboard=True)
 
 def casino_menu_keyboard():
@@ -7212,18 +7212,9 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
 
 # ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
 # ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
-@dp.message(F.text == "⚙️ Админ панель")
+@dp.message(F.text == "🔧 Админка")
 async def admin_panel(message: Message):
-    if message.chat.type != 'private':
-        return
-    user_id = message.from_user.id
-    # Проверка на супер-админа (ваш ID гарантированно добавлен в SUPER_ADMINS)
-    if not await is_admin(user_id):
-        await message.answer("❌ У тебя нет прав администратора.")
-        return
-    permissions = await get_admin_permissions(user_id)
-    # УБИРАЕМ send_with_media и используем простой answer
-    await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
+    await message.answer("РАБОТАЕТ!")
 
 @dp.message(F.text == "◀️ Назад в админку")
 async def back_to_admin(message: Message):
