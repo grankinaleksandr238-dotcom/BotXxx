@@ -2992,8 +2992,8 @@ async def get_user_username(user_id: int) -> str:
         return username or "нет юзернейма"
 
 # ==================== РЕГИСТРАЦИЯ МИДЛВАРЕЙ ====================
-dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
-dp.message.middleware(GlobalCooldownMiddleware())
+#dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
+#dp.message.middleware(GlobalCooldownMiddleware())
 
 # ==================== КОНЕЦ ЧАСТИ 1 ====================
 # ==================== ЧАСТЬ 2: СОСТОЯНИЯ FSM И КЛАВИАТУРЫ ====================
