@@ -61,6 +61,7 @@ YOUR_ID = 8127013147
 if YOUR_ID not in SUPER_ADMINS:
     SUPER_ADMINS.append(YOUR_ID)
     logging.info(f"✅ Ваш ID {YOUR_ID} добавлен в супер-админы")
+    logging.info(f"Текущий список SUPER_ADMINS: {SUPER_ADMINS}")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
