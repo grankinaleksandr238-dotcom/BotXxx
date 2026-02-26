@@ -7211,6 +7211,7 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
     return parts
 
 # ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
+# ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
 @dp.message(F.text == "⚙️ Админ панель")
 async def admin_panel(message: Message):
     if message.chat.type != 'private':
@@ -7221,7 +7222,8 @@ async def admin_panel(message: Message):
         await message.answer("❌ У тебя нет прав администратора.")
         return
     permissions = await get_admin_permissions(user_id)
-    await send_with_media(message.chat.id, "Панель администратора:", media_key='admin', reply_markup=admin_main_keyboard(permissions))
+    # УБИРАЕМ send_with_media и используем простой answer
+    await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
 
 @dp.message(F.text == "◀️ Назад в админку")
 async def back_to_admin(message: Message):
@@ -7230,7 +7232,7 @@ async def back_to_admin(message: Message):
     if not await is_admin(message.from_user.id):
         return
     permissions = await get_admin_permissions(message.from_user.id)
-    await send_with_media(message.chat.id, "Панель администратора:", media_key='admin', reply_markup=admin_main_keyboard(permissions))
+    await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
 
 # ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
 @dp.message(F.text == "👥 Пользователи")
@@ -8687,17 +8689,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
 
-# ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
-@dp.message(F.text == "⚙️ Админ панель")
-async def admin_panel(message: Message):
-    if message.chat.type != 'private':
-        return
-    user_id = message.from_user.id
-    if not await is_admin(user_id):
-        await message.answer("❌ У тебя нет прав администратора.")
-        return
-    permissions = await get_admin_permissions(user_id)
-    await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
+
 # Все функции и переменные из частей 1-4 и 5.1 предполагаются доступными
 # (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
 
