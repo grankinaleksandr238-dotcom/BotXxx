@@ -774,7 +774,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         if event.chat.type != 'private':
             return await handler(event, data)
         user_id = event.from_user.id
-        if is_super_admin(user_id):
+        if await is_super_admin(user_id):
             return await handler(event, data)
         now = time.time()
         if now - self.user_last_time[user_id] < self.rate_limit:
