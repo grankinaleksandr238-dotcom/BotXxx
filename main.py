@@ -8687,6 +8687,17 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
 
+# ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
+@dp.message(F.text == "⚙️ Админ панель")
+async def admin_panel(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        await message.answer("❌ У тебя нет прав администратора.")
+        return
+    permissions = await get_admin_permissions(user_id)
+    await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
 # Все функции и переменные из частей 1-4 и 5.1 предполагаются доступными
 # (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
 
