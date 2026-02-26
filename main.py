@@ -3771,14 +3771,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.exceptions import TelegramBadRequest
 
-# ==================== ВРЕМЕННЫЙ ОТЛАДОЧНЫЙ ХЭНДЛЕР ====================
-@dp.message(F.text)
-async def debug_all_texts(message: Message):
-    logging.info(f"DEBUG: получен текст '{message.text}' от {message.from_user.id}")
-    # Не отменяем обработку – сообщение пойдёт к следующим хэндлерам
-
-# ==================== ДАЛЕЕ ИДУТ ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ И ОСТАЛЬНЫЕ ХЭНДЛЕРЫ ====================
-
 # Все функции и переменные из частей 1-2 предполагаются доступными
 # (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
 
