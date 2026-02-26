@@ -35,6 +35,18 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 
+# ========== ВРЕМЕННЫЙ ДЕБАГ ==========
+@dp.message(F.text)
+async def debug_all_messages(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    print(f"🔥 ПОЛУЧЕНО СООБЩЕНИЕ: '{message.text}' | user_id: {message.from_user.id} | state: {current_state}")
+
+@dp.message(lambda message: "Админка" in message.text)
+async def temp_admin_handler(message: Message):
+    print(f"🟢 temp_admin_handler сработал на текст: {message.text}")
+    await message.answer("Тест: админка вызвана!")
+# ========== КОНЕЦ ВРЕМЕННОГО ДЕБАГА ==========
+
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
