@@ -81,6 +81,10 @@ if REDIS_URL:
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+@dp.message()
+async def debug_all_messages(message: Message):
+    if message.chat.type == 'private':
+        await message.answer(f"🔍 Отладка: получен текст: '{message.text}'")
 
 # ==================== КЕШИРОВАНИЕ С ПРОВЕРКОЙ НА НАЛИЧИЕ REDIS ====================
 async def redis_get(key: str) -> Optional[str]:
