@@ -7216,14 +7216,7 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
 async def admin_panel(message: Message):
     await message.answer("РАБОТАЕТ!")
 
-@dp.message(F.text == "◀️ Назад в админку")
-async def back_to_admin(message: Message):
-    if message.chat.type != 'private':
-        return
-    if not await is_admin(message.from_user.id):
-        return
-    permissions = await get_admin_permissions(message.from_user.id)
-    await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
+
 
 # ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
 @dp.message(F.text == "👥 Пользователи")
