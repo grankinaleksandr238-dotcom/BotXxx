@@ -761,7 +761,31 @@ def db_retry(max_retries=3, delay=1):
     return decorator
 
 
+# ==================== МИДЛВАРЬ ДЛЯ ЛИЧНЫХ СООБЩЕНИЙ (анти-флуд) ====================
+class ThrottlingMiddleware(BaseMiddleware):
+    def __init__(self, rate_limit=1.0):
+        self.rate_limit = rate_limit
+        self.user_last_time = defaultdict(float)
 
+    async def __call__(self, handler, event: Message, data: dict):
+        if event.chat.type != 'private':
+            return await handler(event, data)
+        user_id = event.from_user.id
+        if await is_super_admin(user_id):
+            return await handler(event, data)
+        now = time.time()
+        if now - self.user_last_time[user_id] < self.rate_limit:
+            try:
+                await event.reply("⏳ Слишком много запросов. Подожди секунду.")
+            except Exception:
+                pass
+            return
+        self.user_last_time[user_id] = now
+        if len(self.user_last_time) > 1000:
+            cutoff = now - 3600
+            self.user_last_time = defaultdict(float, {k:v for k,v in self.user_last_time.items() if v > cutoff})
+        return await handler(event, data)
+        
 # ==================== МИДЛВАРЬ ДЛЯ ГЛОБАЛЬНОГО КУЛДАУНА В ЧАТАХ ====================
 class GlobalCooldownMiddleware(BaseMiddleware):
     async def __call__(self, handler, event: Message, data: dict):
