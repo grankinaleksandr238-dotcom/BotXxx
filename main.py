@@ -3303,7 +3303,7 @@ def main_menu_keyboard(is_admin: bool = False):
         KeyboardButton(text="🎓 Университет")
     )
     if is_admin:
-        builder.row(KeyboardButton(text="🔧 Админка"))
+        builder.row(KeyboardButton(text="Админка"))
     return builder.as_markup(resize_keyboard=True)
 
 def casino_menu_keyboard():
@@ -7288,7 +7288,7 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
     return parts
 
 # ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
-@dp.message(F.text == "🔧 Админка")
+@dp.message(F.text == "Админка")
 async def admin_panel(message: Message):
     try:
         user_id = message.from_user.id
