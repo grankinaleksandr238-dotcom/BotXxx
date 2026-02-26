@@ -7215,7 +7215,16 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
 # ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
 @dp.message(F.text == "🔧 Админка")
 async def admin_panel(message: Message):
-    await message.answer("РАБОТАЕТ!")
+    logging.info("admin_panel: entered")
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        logging.info("admin_panel: not admin")
+        await message.answer("Нет прав")
+        return
+    logging.info("admin_panel: is admin, trying to get permissions")
+    permissions = await get_admin_permissions(user_id)
+    logging.info(f"admin_panel: permissions = {permissions}")
+    await send_with_media(...)
 
 
 
