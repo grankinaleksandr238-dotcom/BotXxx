@@ -7303,8 +7303,8 @@ async def admin_panel(message: Message):
             reply_markup=admin_main_keyboard(permissions)
         )
     except Exception as e:
-    logging.error(f"Admin panel error: {e}", exc_info=True)
-    await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+        logging.error(f"Admin panel error: {e}", exc_info=True)
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
 
 # ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
 @dp.message(F.text == "👥 Пользователи")
