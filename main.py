@@ -17,7 +17,7 @@ from collections import defaultdict
 from functools import lru_cache, wraps
 
 import asyncpg
-from aiogram import Bot, Dispatcher, types, BaseMiddleware
+from aiogram import Bot, Dispatcher, types, BaseMiddleware, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -34,6 +34,7 @@ from aiogram.exceptions import (
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+
 
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
