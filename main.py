@@ -6746,7 +6746,7 @@ async def activate_chat_command(message: Message):
         )
 
 # ==================== ОБРАБОТЧИК КЛЮЧЕВЫХ СЛОВ НАЛЁТОВ ====================
-@dp.message(F.text & ~F.text.startswith('/'))
+@dp.message(F.chat.type.in_({'group', 'supergroup'}), F.text & ~F.text.startswith('/'))
 async def heist_keyword_handler(message: Message):
     """Обрабатывает ключевые слова налётов в чатах. При вводе кодового слова добавляет участника."""
     if not await check_chat(message):
