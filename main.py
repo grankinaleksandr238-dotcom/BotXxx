@@ -3572,10 +3572,12 @@ def giveaway_condition_keyboard():
     ])
 
 def admin_main_keyboard(permissions: List[str]):
+    from aiogram.types import KeyboardButton  # принудительный импорт
     builder = ReplyKeyboardBuilder()
     row1 = []
     if "manage_users" in permissions:
         row1.append(KeyboardButton("👥 Пользователи"))
+    # ... остальной код без изменений
     if "manage_shop" in permissions:
         row1.append(KeyboardButton("🛒 Магазин"))
     if "manage_giveaways" in permissions:
