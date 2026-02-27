@@ -6854,3 +6854,616 @@ async def betray_choice_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("✅ Твой выбор зарегистрирован. Ожидай результатов в чате.")
 
 # ==================== КОНЕЦ ЧАСТИ 3.2 ====================
+# ==================== ЧАСТЬ 4: ГРУППОВЫЕ ХЕНДЛЕРЫ ====================
+
+import asyncio
+import logging
+import random
+from datetime import datetime, timedelta, date
+
+from aiogram import F, types
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.context import FSMContext
+
+# Все функции и переменные из частей 1-3 предполагаются доступными
+# (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ ГРУПП ====================
+async def check_chat(message: Message) -> bool:
+    """Проверяет, что сообщение из группы и чат активирован."""
+    if message.chat.type == 'private':
+        return False
+    if not await is_chat_confirmed(message.chat.id):
+        await auto_delete_command(message, "❌ Этот чат не активирован. Используйте /activate_chat для запроса активации.")
+        return False
+    return True
+
+# ==================== КОМАНДА /activate_chat ====================
+@dp.message(Command("activate_chat"))
+async def activate_chat_command(message: Message):
+    if message.chat.type == 'private':
+        await message.reply("❌ Эта команда работает только в группах.")
+        return
+
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+
+    if await is_chat_confirmed(chat_id):
+        await auto_delete_command(message, "✅ Этот чат уже активирован!")
+        return
+
+    await create_chat_confirmation_request(
+        chat_id,
+        message.chat.title or "Без названия",
+        message.chat.type,
+        user_id
+    )
+
+    await auto_delete_command(message, "📨 Запрос на активацию чата отправлен администраторам!")
+
+    admins = SUPER_ADMINS.copy()
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM admins")
+        admins.extend([r['user_id'] for r in rows])
+
+    for admin_id in admins:
+        await safe_send_message(
+            admin_id,
+            f"🔔 Запрос на активацию чата!\n"
+            f"Чат: {message.chat.title} (ID: {chat_id})\n"
+            f"Запросил: {message.from_user.first_name} (ID: {user_id})",
+            reply_markup=confirm_chat_inline(chat_id)
+        )
+
+# ==================== ОБРАБОТЧИК КЛЮЧЕВЫХ СЛОВ НАЛЁТОВ ====================
+@dp.message(F.chat.type.in_({'group', 'supergroup'}), F.text & ~F.text.startswith('/'))
+async def heist_keyword_handler(message: Message):
+    """Обрабатывает ключевые слова налётов в чатах. При вводе кодового слова добавляет участника."""
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+
+    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
+    ok, remaining = await check_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+    if not ok:
+        await auto_delete_command(message, f"⏳ Глобальный кулдаун! Ты сможешь снова участвовать через {format_time_remaining(remaining)}")
+        return
+
+    text = message.text.strip().upper()
+    chat_id = message.chat.id
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            heist = await conn.fetchrow(
+                "SELECT * FROM heists WHERE chat_id=$1 AND status='joining' AND join_until > NOW()",
+                chat_id
+            )
+            if not heist:
+                return
+
+            if text != heist['keyword']:
+                return
+
+            if await can_delete_message(message.chat.id, message):
+                await message.delete()
+
+            exists = await conn.fetchval(
+                "SELECT 1 FROM heist_participants WHERE heist_id=$1 AND user_id=$2",
+                heist['id'], user_id
+            )
+            if exists:
+                await auto_delete_reply(message, "Ты уже в деле! Жди начала распила.")
+                return
+
+            # Проверка максимального количества участников
+            max_participants = await get_setting_int("heist_max_participants")
+            if max_participants > 0:
+                current_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist['id'])
+                if current_count >= max_participants:
+                    await auto_delete_reply(message, "❌ В налёте уже максимальное количество участников.")
+                    return
+
+            participant_cooldown = await get_setting_int("heist_participant_cooldown_hours") * 3600
+            ok, remaining = await check_global_cooldown(user_id, "heist_participate", participant_cooldown)
+            if not ok:
+                await auto_delete_reply(message, f"⏳ Ты ещё не остыл после прошлого налёта. Подожди {format_time_remaining(remaining)}.")
+                return
+
+            # Используем настройки для доли
+            share_min = await get_setting_int("heist_share_min")
+            share_max = await get_setting_int("heist_share_max")
+            share = random.randint(share_min, share_max)
+
+            success, new_balance, _ = await update_user_balance(user_id, share, conn=conn, allow_negative=False)
+            if not success:
+                await auto_delete_reply(message, "❌ Ошибка при начислении доли.")
+                return
+
+            new_total = float(heist['total_pot']) + share
+            new_remaining = float(heist['remaining_pot']) + share
+            await conn.execute(
+                "UPDATE heists SET total_pot=$1, remaining_pot=$2 WHERE id=$3",
+                new_total, new_remaining, heist['id']
+            )
+            await conn.execute(
+                "INSERT INTO heist_participants (heist_id, user_id, base_share, current_share, defense_bonus, joined_at) "
+                "VALUES ($1, $2, $3, $3, 0, $4)",
+                heist['id'], user_id, share, datetime.now()
+            )
+
+            await set_global_cooldown(user_id, "heist_participate", participant_cooldown)
+            # Устанавливаем глобальный кулдаун чата
+            await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+
+            user_info = await conn.fetchrow("SELECT first_name FROM users WHERE user_id=$1", user_id)
+            name = user_info['first_name'] if user_info else f"ID{user_id}"
+            config = HEIST_TYPES[heist['event_type']]
+            phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]),
+                                      name=name)
+            await auto_delete_reply(message, phrase)
+
+# ==================== КОМАНДА /mlb_heist (СТАТУС НАЛЁТА) ====================
+@dp.message(Command("mlb_heist"))
+async def cmd_chat_heist_status(message: Message):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await auto_delete_message(message)
+
+    chat_id = message.chat.id
+    async with db_pool.acquire() as conn:
+        heist = await conn.fetchrow(
+            "SELECT * FROM heists WHERE chat_id=$1 AND status IN ('joining', 'splitting')",
+            chat_id
+        )
+        if not heist:
+            await auto_delete_reply(message, "❌ В этом чате нет активного налёта.")
+            return
+        count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist['id'])
+        status_emoji = "🟡" if heist['status'] == 'joining' else "🔴"
+        join_until = heist['join_until'] if heist['status'] == 'joining' else None
+        split_until = heist['split_until'] if heist['status'] == 'splitting' else None
+        if heist['status'] == 'joining':
+            time_remaining = (join_until - datetime.now()).total_seconds()
+            time_str = format_time_remaining(int(time_remaining)) if time_remaining > 0 else "завершается"
+        else:
+            time_remaining = (split_until - datetime.now()).total_seconds()
+            time_str = format_time_remaining(int(time_remaining)) if time_remaining > 0 else "завершается"
+
+        text = (
+            f"{status_emoji} Налёт: {HEIST_TYPES[heist['event_type']]['name']}\n"
+            f"👥 Участников: {count}\n"
+            f"⏳ До {'сбора' if heist['status']=='joining' else 'распила'}: {time_str}"
+        )
+        await auto_delete_reply(message, text)
+
+# ==================== КОМАНДА /mlb_smuggle (КОНТРАБАНДА) С ПРОВЕРКОЙ ПОДПИСКИ ====================
+@dp.message(Command("mlb_smuggle"))
+async def cmd_smuggle(message: Message):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+
+    # Проверка подписки на каналы
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await auto_delete_command(message, "❗️ Для использования контрабанды необходимо подписаться на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
+    ok, remaining = await check_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+    if not ok:
+        await auto_delete_command(message, f"⏳ Глобальный кулдаун! Подожди {format_time_remaining(remaining)}.")
+        return
+
+    async with db_pool.acquire() as conn:
+        active_run = await conn.fetchval(
+            "SELECT 1 FROM smuggle_runs WHERE user_id=$1 AND status='in_progress'",
+            user_id
+        )
+        if active_run:
+            await auto_delete_command(message, "❌ Ты уже в рейсе. Дождись возвращения.")
+            return
+
+    ok, remaining = await check_smuggle_cooldown(user_id)
+    if not ok:
+        minutes = remaining // 60
+        seconds = remaining % 60
+        await auto_delete_command(message, f"⏳ Ты ещё не вернулся из рейса. Подожди {minutes} мин {seconds} сек.")
+        return
+
+    min_dur = await get_setting_int("smuggle_min_duration")
+    max_dur = await get_setting_int("smuggle_max_duration")
+    duration = random.randint(min_dur, max_dur)
+    end_time = datetime.now() + timedelta(minutes=duration)
+    cargo_list = ["ящики с сигарами", "партия виски", "контрабандное оружие", "драгоценные камни", "золотые слитки"]
+    cargo = random.choice(cargo_list)
+
+    async with db_pool.acquire() as conn:
+        run_id = await conn.fetchval(
+            "INSERT INTO smuggle_runs (user_id, start_time, end_time, chat_id) VALUES ($1, $2, $3, $4) RETURNING id",
+            user_id, datetime.now(), end_time, message.chat.id
+        )
+    await set_smuggle_cooldown(user_id, 0)
+    # Устанавливаем глобальный кулдаун чата
+    await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+
+    name = message.from_user.first_name
+    phrase = get_random_phrase(SMUGGLE_START_PHRASES, name=name, cargo=cargo, duration=duration)
+
+    file_id = await get_media_file_id('smuggle_start')
+    if file_id:
+        sent = await bot.send_photo(message.chat.id, file_id, caption=phrase)
+        delete_seconds = int(await get_setting("auto_delete_commands_seconds"))
+        asyncio.create_task(delete_after(sent, delete_seconds))
+    else:
+        await auto_delete_command(message, phrase)
+
+# ==================== КОМАНДА /mlb_jail (ТЮРЬМА) С ПРОВЕРКОЙ ПОДПИСКИ ====================
+@dp.message(Command("mlb_jail"))
+async def cmd_jail(message: Message, state: FSMContext):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+
+    # Проверка подписки на каналы
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await auto_delete_command(message, "❗️ Для использования тюрьмы необходимо подписаться на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
+    ok, remaining = await check_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+    if not ok:
+        await auto_delete_command(message, f"⏳ Глобальный кулдаун! Подожди {format_time_remaining(remaining)}.")
+        return
+
+    async with db_pool.acquire() as conn:
+        active = await conn.fetchval(
+            "SELECT 1 FROM jail_sentences WHERE user_id=$1 AND status='serving'",
+            user_id
+        )
+        if active:
+            await auto_delete_command(message, "❌ Ты уже отбываешь срок. Дождись окончания.")
+            return
+
+    cooldown_hours_jail = await get_setting_int("jail_cooldown_hours")
+    ok, remaining = await check_global_cooldown(user_id, 'jail', cooldown_hours_jail * 3600)
+    if not ok:
+        await auto_delete_command(message, f"⏳ В тюрьму можно попасть раз в {cooldown_hours_jail} ч. Осталось {format_time_remaining(remaining)}.")
+        return
+
+    await auto_delete_message(message)
+
+    await state.update_data(chat_id=message.chat.id)
+
+    try:
+        await bot.send_message(
+            user_id,
+            "🔒 Выбери номер камеры, в которую хочешь отправиться (от 1 до 15):",
+            reply_markup=jail_cell_keyboard()
+        )
+        await state.set_state(JailProcess.cell)
+    except Exception as e:
+        logging.error(f"Failed to send jail menu to {user_id}: {e}")
+        await auto_delete_reply(message, "❌ Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.")
+
+# ==================== ОБРАБОТЧИК ВЫБОРА КАМЕРЫ (ИЗ ЛС) ====================
+@dp.callback_query(JailProcess.cell, F.data.startswith("jail_cell_"))
+async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()  # Важно для обратной связи
+    cell = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    await state.update_data(cell=cell)
+    await callback.message.answer("🔢 Введи номер статьи (от 1 до 300):")
+    await state.set_state(JailProcess.article)
+
+@dp.message(JailProcess.article, F.text)
+async def jail_article_message(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("❌ Процесс отменён.", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
+        return
+    try:
+        article = int(message.text)
+        if article < 1 or article > 300:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи целое число от 1 до 300.")
+        return
+
+    data = await state.get_data()
+    chat_id = data.get('chat_id')
+    cell = data.get('cell')
+    user_id = message.from_user.id
+
+    min_duration = await get_setting_int("jail_min_duration")
+    max_duration = await get_setting_int("jail_max_duration")
+    duration = random.randint(min_duration, max_duration)
+
+    await start_jail_sentence(user_id, chat_id, duration, cell, article)
+
+    # Проверка на золотой билет (1% шанс)
+    if random.random() < 0.01:
+        gift_amount = await get_setting_float("golden_ticket_gift")
+        await update_user_balance(user_id, gift_amount, allow_negative=False)
+        await safe_send_chat(
+            chat_id,
+            f"🎫 <b>ЗОЛОТОЙ БИЛЕТ!</b>\n"
+            f"{message.from_user.first_name} нашёл золотой билет и получает {gift_amount:.2f} баксов!"
+        )
+
+    name = message.from_user.first_name
+    phrase = get_random_phrase(JAIL_START_PHRASES, name=name, duration=duration)
+
+    cooldown_hours_jail = await get_setting_int("jail_cooldown_hours")
+    await set_global_cooldown(user_id, 'jail', cooldown_hours_jail * 3600)
+
+    # Устанавливаем глобальный кулдаун чата
+    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
+    await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+
+    if chat_id:
+        try:
+            await safe_send_chat(chat_id, phrase)
+        except Exception as e:
+            logging.error(f"Failed to send jail start to chat {chat_id}: {e}")
+            await message.answer(phrase)
+    else:
+        await message.answer(phrase)
+
+    # Подтверждение пользователю в ЛС
+    await message.answer("✅ Ты отправился в тюрьму! Ожидай результатов.")
+
+    await state.clear()
+
+# ==================== КОМАНДА /mlb_top (ТОП В ЧАТЕ) ====================
+@dp.message(Command("mlb_top"))
+async def cmd_chat_top(message: Message):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await auto_delete_message(message)
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("💰 По богатству", callback_data="chat_top_balance_1"),
+         InlineKeyboardButton("⭐️ По репутации", callback_data="chat_top_reputation_1")]
+    ])
+    await auto_delete_reply(message, "🏆 Выбери категорию топа:", reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("chat_top_"))
+async def chat_top_callback(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split("_")
+    category = parts[2]
+    page = int(parts[3])
+
+    offset = (page - 1) * ITEMS_PER_PAGE
+    if category == "balance":
+        order_field = "balance"
+        title = "💰 Самые богатые"
+    else:
+        order_field = "reputation"
+        title = "⭐️ По репутации"
+
+    async with db_pool.acquire() as conn:
+        total = await conn.fetchval("SELECT COUNT(*) FROM users")
+        rows = await conn.fetch(
+            f"SELECT first_name, {order_field} as value FROM users ORDER BY value DESC LIMIT $1 OFFSET $2",
+            ITEMS_PER_PAGE, offset
+        )
+
+    if not rows:
+        await callback.message.edit_text("Нет данных.")
+        return
+
+    text = f"{title} (страница {page}):\n\n"
+    for idx, row in enumerate(rows, start=offset+1):
+        val = row['value']
+        if category == "balance":
+            val = f"{float(val):.2f} $"
+        else:
+            val = f"{val} ⭐"
+        text += f"{idx}. {row['first_name']} – {val}\n"
+
+    nav = []
+    if page > 1:
+        nav.append(InlineKeyboardButton("⬅️", callback_data=f"chat_top_{category}_{page-1}"))
+    if offset + ITEMS_PER_PAGE < total:
+        nav.append(InlineKeyboardButton("➡️", callback_data=f"chat_top_{category}_{page+1}"))
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[nav] if nav else [])
+    await callback.message.edit_text(text, reply_markup=kb)
+
+# ==================== КОМАНДА /mlb_profile (ПРОФИЛЬ В ЧАТЕ) ====================
+@dp.message(Command("mlb_profile"))
+async def cmd_chat_profile(message: Message):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await auto_delete_message(message)
+
+    balance = await get_user_balance(user_id)
+    bitcoin = await get_user_bitcoin(user_id)
+    authority = await get_user_authority(user_id)
+    level = await get_user_level(user_id)
+    rep = await get_user_reputation(user_id)
+
+    text = (
+        f"👤 Профиль {message.from_user.first_name}:\n"
+        f"📊 Уровень: {level}\n"
+        f"💰 Баланс: {balance:.2f} баксов\n"
+        f"₿ Биткоины: {bitcoin:.4f} BTC\n"
+        f"⭐️ Репутация: {rep}\n"
+        f"⚔️ Авторитет: {authority}"
+    )
+    await auto_delete_reply(message, text)
+
+# ==================== КОМАНДА /myheist (МОЙ ТЕКУЩИЙ НАЛЁТ) ====================
+@dp.message(Command("myheist"))
+async def cmd_my_heist(message: Message):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await auto_delete_message(message)
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT hp.*, h.event_type, h.total_pot, h.btc_pot, h.split_until, h.status
+            FROM heist_participants hp
+            JOIN heists h ON hp.heist_id = h.id
+            WHERE hp.user_id=$1 AND h.status IN ('joining', 'splitting')
+            ORDER BY h.started_at DESC LIMIT 1
+        """, user_id)
+        if not row:
+            await auto_delete_reply(message, "❌ Ты не участвуешь в активных налётах.")
+            return
+        text = (
+            f"🔫 Твой текущий налёт ({row['event_type']}):\n"
+            f"Статус: {'сбор' if row['status']=='joining' else 'распил'}\n"
+            f"Твоя текущая доля: {float(row['current_share']):.2f} $"
+        )
+        if row['btc_pot'] > 0:
+            text += f"\n₿ В банке BTC: {float(row['btc_pot']):.4f} (будет разделен поровну после распила)"
+        if row['status'] == 'splitting':
+            remaining = (row['split_until'] - datetime.now()).total_seconds()
+            if remaining > 0:
+                text += f"\n⏳ До конца распила: {format_time_remaining(int(remaining))}"
+        await auto_delete_reply(message, text)
+
+# ==================== ПОДГОН (GIFT) В ЧАТЕ ====================
+@dp.message(F.text == "🎁 Подгон")
+async def chat_gift(message: Message):
+    if not await check_chat(message):
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await auto_delete_command(message, "⛔ Вы заблокированы.")
+        return
+
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+
+    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
+    ok, remaining = await check_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+    if not ok:
+        await auto_delete_command(message, f"⏳ Глобальный кулдаун! Подожди {format_time_remaining(remaining)}.")
+        return
+
+    await auto_delete_message(message)
+
+    gift_amount = await get_setting_float("gift_amount")
+    gift_limit_per_chat = await get_setting_int("gift_limit_per_day")
+    gift_global_limit = await get_setting_int("gift_global_limit_per_user")
+    gift_cooldown = await get_setting_int("gift_cooldown")
+    today_date = date.today()
+    now = datetime.now()
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            await conn.execute("SET LOCAL statement_timeout = '5s'")
+            chat_info = await conn.fetchrow("SELECT * FROM confirmed_chats WHERE chat_id=$1 FOR UPDATE", message.chat.id)
+            if not chat_info:
+                return
+            last_gift_date = chat_info['last_gift_date']
+            gift_count_today = chat_info['gift_count_today'] if last_gift_date == today_date else 0
+
+            if gift_count_today >= gift_limit_per_chat:
+                await auto_delete_reply(message, f"❌ Сегодня в этом чате уже использовано {gift_count_today} из {gift_limit_per_chat} подгонов.")
+                return
+
+            user = await conn.fetchrow("SELECT last_gift_time, gift_count_today FROM users WHERE user_id=$1 FOR UPDATE", user_id)
+            if not user:
+                user = {'last_gift_time': None, 'gift_count_today': 0}
+            if user['last_gift_time'] and user['last_gift_time'].date() == today_date:
+                user_gift_count = user['gift_count_today']
+            else:
+                user_gift_count = 0
+
+            if user_gift_count >= gift_global_limit:
+                await auto_delete_reply(message, f"❌ Сегодня ты уже получил {user_gift_count} из {gift_global_limit} подгонов во всех чатах.")
+                return
+
+            if user['last_gift_time']:
+                last_gift = user['last_gift_time']
+                diff = (now - last_gift).total_seconds() / 60
+                if diff < gift_cooldown:
+                    remaining_minutes = int(gift_cooldown - diff)
+                    await auto_delete_reply(message, f"⏳ Подгон можно будет использовать через {remaining_minutes} мин.")
+                    return
+
+            try:
+                admins = await bot.get_chat_administrators(message.chat.id)
+                eligible = [a.user for a in admins if a.user.id != user_id and a.user.id != (await bot.me()).id and not await is_banned(a.user.id)]
+                if not eligible:
+                    await auto_delete_reply(message, "❌ Нет подходящих получателей для подарка.")
+                    return
+                recipient = random.choice(eligible)
+            except Exception as e:
+                logging.error(f"Gift error: {e}")
+                await auto_delete_reply(message, "❌ Не удалось выбрать получателя.")
+                return
+
+            await conn.execute(
+                "INSERT INTO users (user_id, username, first_name, joined_date) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING",
+                recipient.id, recipient.username, recipient.first_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            )
+
+            success, new_balance, _ = await update_user_balance(recipient.id, gift_amount, conn=conn, allow_negative=False)
+            if not success:
+                await auto_delete_reply(message, "❌ Ошибка при начислении подарка.")
+                return
+
+            if last_gift_date == today_date:
+                await conn.execute("UPDATE confirmed_chats SET gift_count_today = gift_count_today + 1 WHERE chat_id=$1", message.chat.id)
+            else:
+                await conn.execute("UPDATE confirmed_chats SET last_gift_date=$1, gift_count_today=1 WHERE chat_id=$2", today_date, message.chat.id)
+
+            new_user_gift_count = user_gift_count + 1
+            await conn.execute(
+                "UPDATE users SET last_gift_time=$1, gift_count_today=$2 WHERE user_id=$3",
+                now, new_user_gift_count, user_id
+            )
+
+            # Устанавливаем глобальный кулдаун чата
+            await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+
+            remaining_chat = gift_limit_per_chat - (gift_count_today + 1)
+            await auto_delete_reply(message,
+                f"🎁 {message.from_user.first_name} активировал подгон!\n"
+                f"Счастливчик: {recipient.first_name} получает {gift_amount:.2f} баксов! 🎉\n"
+                f"📊 Сегодня в этом чате осталось подгонов: {remaining_chat}"
+            )
+
+# ==================== КОНЕЦ ЧАСТИ 4 ====================
