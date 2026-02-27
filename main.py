@@ -7306,7 +7306,18 @@ async def admin_panel(message: Message):
     except Exception as e:
         logging.error(f"Admin panel error: {e}", exc_info=True)
         await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
-
+@dp.message(F.text == "◀️ Назад в админку")
+async def back_to_admin_panel(message: Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        return
+    permissions = await get_admin_permissions(user_id)
+    await send_with_media(
+        message.chat.id,
+        "Панель администратора:",
+        media_key='admin',
+        reply_markup=admin_main_keyboard(permissions)
+    )
 # ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
 @dp.message(F.text == "👥 Пользователи")
 async def admin_users_menu(message: Message):
