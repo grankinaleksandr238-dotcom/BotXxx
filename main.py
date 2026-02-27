@@ -1125,38 +1125,30 @@ async def init_db():
                 defense INTEGER DEFAULT 1
             )
         ''')
-        # Добавляем уникальное ограничение на username (после очистки дубликатов)
-        # Сначала удалим возможные дубликаты, оставим последнего по времени регистрации (по joined_date)
-        await conn.execute('''
-            WITH duplicates AS (
-                SELECT user_id, username, joined_date,
-                       ROW_NUMBER() OVER (PARTITION BY username ORDER BY joined_date DESC) as rn
-                FROM users
-                WHERE username IS NOT NULL
-            )
-            DELETE FROM users
-            WHERE user_id IN (
-                SELECT user_id FROM duplicates WHERE rn > 1
-            )
-        ''')
-        # Теперь добавляем уникальное ограничение
-        await conn.execute('''
-            ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)
-        ''')
-        # Таблица бизнесов пользователей
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_businesses (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                business_type_id INTEGER NOT NULL,
-                level INTEGER DEFAULT 1,
-                last_collection TIMESTAMP,
-                accumulated INTEGER DEFAULT 0,
-                purchased_at TIMESTAMP DEFAULT NOW(),
-                expires_at TIMESTAMP,
-                UNIQUE(user_id, business_type_id)
-            )
-        ''')
+                # Проверяем, существует ли ограничение на username
+        constraint_exists = await conn.fetchval("""
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = 'users_username_unique' AND table_name = 'users'
+        """)
+
+        if not constraint_exists:
+            # Сначала удалим возможные дубликаты, оставим последнего по времени регистрации (по joined_date)
+            await conn.execute('''
+                WITH duplicates AS (
+                    SELECT user_id, username, joined_date,
+                           ROW_NUMBER() OVER (PARTITION BY username ORDER BY joined_date DESC) as rn
+                    FROM users
+                    WHERE username IS NOT NULL
+                )
+                DELETE FROM users
+                WHERE user_id IN (
+                    SELECT user_id FROM duplicates WHERE rn > 1
+                )
+            ''')
+            # Теперь добавляем уникальное ограничение
+            await conn.execute('ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)')
+        else:
+            logging.info("Ограничение users_username_unique уже существует, пропускаем создание")
         # Таблица типов бизнесов
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS business_types (
