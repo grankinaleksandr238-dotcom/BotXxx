@@ -7467,3 +7467,1576 @@ async def chat_gift(message: Message):
             )
 
 # ==================== КОНЕЦ ЧАСТИ 4 ====================
+# ==================== ЧАСТЬ 5.1: АДМИНИСТРАТИВНАЯ ПАНЕЛЬ (УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ, МАГАЗИНОМ, КАНАЛАМИ, ПРОМОКОДАМИ, ЧАТАМИ) ====================
+
+import asyncio
+import io
+import csv
+import json
+import logging
+from datetime import datetime, timedelta
+
+from aiogram import F, types
+from aiogram.filters import Command, StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramRetryAfter, TelegramAPIError
+
+# Все функции и переменные из частей 1-4 предполагаются доступными
+# (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ ====================
+async def check_admin_permissions(user_id: int, permission: str) -> bool:
+    return await has_permission(user_id, permission)
+
+def safe_split_text(text: str, limit: int = 4000) -> list:
+    """Разбивает длинный текст на части, не разрывая строки."""
+    lines = text.split('\n')
+    parts = []
+    current = ""
+    for line in lines:
+        if len(current) + len(line) + 1 > limit:
+            parts.append(current)
+            current = line
+        else:
+            if current:
+                current += '\n' + line
+            else:
+                current = line
+    if current:
+        parts.append(current)
+    return parts
+
+# ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
+@dp.message(F.text == "Админка")
+async def admin_panel(message: Message):
+    try:
+        user_id = message.from_user.id
+        if not await is_admin(user_id):
+            await message.answer("❌ Нет прав")
+            return
+        permissions = await get_admin_permissions(user_id)
+        await send_with_media(
+            message.chat.id,
+            "Панель администратора:",
+            media_key='admin',
+            reply_markup=admin_main_keyboard(permissions)
+        )
+    except Exception as e:
+        logging.error(f"Admin panel error: {e}", exc_info=True)
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+
+@dp.message(F.text == "◀️ Назад в админку")
+async def back_to_admin_panel(message: Message):
+    user_id = message.from_user.id
+    if not await is_admin(user_id):
+        return
+    permissions = await get_admin_permissions(user_id)
+    await send_with_media(
+        message.chat.id,
+        "Панель администратора:",
+        media_key='admin',
+        reply_markup=admin_main_keyboard(permissions)
+    )
+
+# ==================== УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ ====================
+@dp.message(F.text == "👥 Пользователи")
+async def admin_users_menu(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await send_with_media(message.chat.id, "Управление пользователями:", media_key='admin_users', reply_markup=admin_users_keyboard())
+
+# ----- Начисление/списание баксов -----
+@dp.message(F.text == "💰 Начислить баксы")
+async def add_balance_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(AddBalance.user_id)
+
+@dp.message(AddBalance.user_id, F.text)
+async def add_balance_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи сумму начисления (можно дробную, например 10.50):")
+    await state.set_state(AddBalance.amount)
+
+@dp.message(AddBalance.amount, F.text)
+async def add_balance_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+        max_input = await get_setting_float("max_input_number")
+        if amount > max_input:
+            await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи положительное число с точностью до сотых.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        success, new_balance, _ = await update_user_balance(uid, amount, allow_negative=False)
+        if not success:
+            await message.answer("❌ Не удалось начислить средства (возможно, отрицательный баланс не разрешён).")
+            return
+        await message.answer(f"✅ Пользователю {uid} начислено {amount:.2f} баксов.")
+        await safe_send_message(uid, f"💰 Вам начислено {amount:.2f} баксов администратором.")
+    except Exception as e:
+        logging.error(f"Add balance error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "💸 Списать баксы")
+async def remove_balance_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(RemoveBalance.user_id)
+
+@dp.message(RemoveBalance.user_id, F.text)
+async def remove_balance_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи сумму списания (можно дробную):")
+    await state.set_state(RemoveBalance.amount)
+
+@dp.message(RemoveBalance.amount, F.text)
+async def remove_balance_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+        max_input = await get_setting_float("max_input_number")
+        if amount > max_input:
+            await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        success, new_balance, _ = await update_user_balance(uid, -amount, allow_negative=False)
+        if not success:
+            await message.answer("❌ Недостаточно средств для списания.")
+            return
+        await message.answer(f"✅ У пользователя {uid} списано {amount:.2f} баксов.")
+        await safe_send_message(uid, f"💸 У вас списано {amount:.2f} баксов администратором.")
+    except Exception as e:
+        logging.error(f"Remove balance error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Начисление/списание репутации -----
+@dp.message(F.text == "⭐️ Начислить репутацию")
+async def add_reputation_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(AddReputation.user_id)
+
+@dp.message(AddReputation.user_id, F.text)
+async def add_reputation_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество репутации для начисления (целое число):")
+    await state.set_state(AddReputation.amount)
+
+@dp.message(AddReputation.amount, F.text)
+async def add_reputation_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        await update_user_reputation(uid, amount)
+        await message.answer(f"✅ Пользователю {uid} начислено {amount} репутации.")
+        await safe_send_message(uid, f"⭐️ Вам начислено {amount} репутации администратором.")
+    except Exception as e:
+        logging.error(f"Add reputation error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "🔻 Снять репутацию")
+async def remove_reputation_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(RemoveReputation.user_id)
+
+@dp.message(RemoveReputation.user_id, F.text)
+async def remove_reputation_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество репутации для снятия (целое число):")
+    await state.set_state(RemoveReputation.amount)
+
+@dp.message(RemoveReputation.amount, F.text)
+async def remove_reputation_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        await update_user_reputation(uid, -amount)
+        await message.answer(f"✅ У пользователя {uid} снято {amount} репутации.")
+        await safe_send_message(uid, f"🔻 У вас снято {amount} репутации администратором.")
+    except Exception as e:
+        logging.error(f"Remove reputation error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Начисление опыта -----
+@dp.message(F.text == "📈 Начислить опыт")
+async def add_exp_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(AddExp.user_id)
+
+@dp.message(AddExp.user_id, F.text)
+async def add_exp_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество опыта для начисления (целое число):")
+    await state.set_state(AddExp.amount)
+
+@dp.message(AddExp.amount, F.text)
+async def add_exp_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        await add_exp(uid, amount)  # add_exp сама отправит уведомление о повышении уровня
+        await message.answer(f"✅ Пользователю {uid} начислено {amount} опыта.")
+    except Exception as e:
+        logging.error(f"Add exp error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Установка уровня -----
+@dp.message(F.text == "🔝 Установить уровень")
+async def set_level_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(SetLevel.user_id)
+
+@dp.message(SetLevel.user_id, F.text)
+async def set_level_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи новый уровень (целое число от 1 до 100):")
+    await state.set_state(SetLevel.level)
+
+@dp.message(SetLevel.level, F.text)
+async def set_level_value(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        level = int(message.text)
+        if level < 1 or level > 100:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи целое число от 1 до 100.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE users SET level=$1 WHERE user_id=$2", level, uid)
+        await message.answer(f"✅ Пользователю {uid} установлен уровень {level}.")
+        await safe_send_message(uid, f"🔝 Ваш уровень изменён на {level} администратором.")
+    except Exception as e:
+        logging.error(f"Set level error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Начисление/списание биткоинов -----
+@dp.message(F.text == "₿ Начислить биткоины")
+async def add_bitcoin_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(AddBitcoin.user_id)
+
+@dp.message(AddBitcoin.user_id, F.text)
+async def add_bitcoin_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество биткоинов (можно дробное, например 1.5):")
+    await state.set_state(AddBitcoin.amount)
+
+@dp.message(AddBitcoin.amount, F.text)
+async def add_bitcoin_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 4)
+        max_input = await get_setting_float("max_input_number")
+        if amount > max_input:
+            await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.4f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи положительное число (можно дробное).")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        success, new_balance = await update_user_bitcoin(uid, amount)
+        if not success:
+            await message.answer("❌ Ошибка при начислении биткоинов.")
+            return
+        await message.answer(f"✅ Пользователю {uid} начислено {amount:.4f} BTC.")
+        await safe_send_message(uid, f"₿ Вам начислено {amount:.4f} BTC администратором.")
+    except Exception as e:
+        logging.error(f"Add bitcoin error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "₿ Списать биткоины")
+async def remove_bitcoin_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(RemoveBitcoin.user_id)
+
+@dp.message(RemoveBitcoin.user_id, F.text)
+async def remove_bitcoin_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество биткоинов для списания:")
+    await state.set_state(RemoveBitcoin.amount)
+
+@dp.message(RemoveBitcoin.amount, F.text)
+async def remove_bitcoin_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 4)
+        max_input = await get_setting_float("max_input_number")
+        if amount > max_input:
+            await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.4f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        success, new_balance = await update_user_bitcoin(uid, -amount)
+        if not success:
+            await message.answer(f"❌ Недостаточно BTC у пользователя {uid}.")
+            return
+        await message.answer(f"✅ У пользователя {uid} списано {amount:.4f} BTC.")
+        await safe_send_message(uid, f"₿ У вас списано {amount:.4f} BTC администратором.")
+    except Exception as e:
+        logging.error(f"Remove bitcoin error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Начисление/списание авторитета -----
+@dp.message(F.text == "⚔️ Начислить авторитет")
+async def add_authority_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(AddAuthority.user_id)
+
+@dp.message(AddAuthority.user_id, F.text)
+async def add_authority_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество авторитета (целое число):")
+    await state.set_state(AddAuthority.amount)
+
+@dp.message(AddAuthority.amount, F.text)
+async def add_authority_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        await update_user_authority(uid, amount)
+        await message.answer(f"✅ Пользователю {uid} начислено {amount} авторитета.")
+        await safe_send_message(uid, f"⚔️ Вам начислено {amount} авторитета администратором.")
+    except Exception as e:
+        logging.error(f"Add authority error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "⚔️ Списать авторитет")
+async def remove_authority_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(RemoveAuthority.user_id)
+
+@dp.message(RemoveAuthority.user_id, F.text)
+async def remove_authority_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    await state.update_data(user_id=uid)
+    await message.answer("Введи количество авторитета для снятия:")
+    await state.set_state(RemoveAuthority.amount)
+
+@dp.message(RemoveAuthority.amount, F.text)
+async def remove_authority_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    try:
+        amount = int(message.text)
+        if amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        await update_user_authority(uid, -amount)
+        await message.answer(f"✅ У пользователя {uid} снято {amount} авторитета.")
+        await safe_send_message(uid, f"⚔️ У вас снято {amount} авторитета администратором.")
+    except Exception as e:
+        logging.error(f"Remove authority error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Поиск пользователя -----
+@dp.message(F.text == "👥 Найти пользователя")
+async def find_user_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(FindUser.query)
+
+@dp.message(FindUser.query, F.text)
+async def find_user_result(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        permissions = await get_admin_permissions(message.from_user.id)
+        await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    name = user_data['first_name']
+    bal = float(user_data['balance'])
+    rep = user_data['reputation']
+    spent = float(user_data['total_spent'])
+    joined = user_data['joined_date']
+    attempts = user_data['theft_attempts']
+    success = user_data['theft_success']
+    failed = user_data['theft_failed']
+    protected = user_data['theft_protected']
+    level = user_data['level']
+    exp = user_data['exp']
+    bitcoin = float(user_data['bitcoin_balance']) if user_data['bitcoin_balance'] is not None else 0.0
+    authority = user_data['authority_balance'] or 0
+    smuggle_success = user_data.get('smuggle_success', 0)
+    smuggle_fail = user_data.get('smuggle_fail', 0)
+    banned = await is_banned(uid)
+    ban_status = "⛔ Заблокирован" if banned else "✅ Активен"
+    text = (
+        f"👤 Пользователь: {name} (ID: {uid})\n"
+        f"📊 Уровень: {level}, опыт: {exp}\n"
+        f"💰 Баланс: {bal:.2f} баксов\n"
+        f"₿ Биткоины: {bitcoin:.4f} BTC\n"
+        f"⚔️ Авторитет: {authority}\n"
+        f"⭐️ Репутация: {rep}\n"
+        f"💸 Потрачено: {spent:.2f} баксов\n"
+        f"📅 Регистрация: {joined}\n"
+        f"🔫 Ограблений: {attempts} (успешно: {success}, провал: {failed})\n"
+        f"📦 Контрабанда: успешно {smuggle_success}, провал {smuggle_fail}\n"
+        f"Статус: {ban_status}"
+    )
+    await message.answer(text)
+    await state.clear()
+
+# ----- Экспорт пользователей -----
+@dp.message(F.text == "📊 Экспорт пользователей")
+async def export_users(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        return
+    try:
+        csv_data = await export_users_to_csv()
+        if not csv_data:
+            await message.answer("Нет пользователей для экспорта.")
+            return
+        await message.answer_document(
+            BufferedInputFile(csv_data, filename="users.csv"),
+            caption="📊 Список пользователей"
+        )
+    except Exception as e:
+        logging.error(f"Export error: {e}")
+        await message.answer("❌ Ошибка при экспорте.")
+
+# ----- Сброс статистики (для админа, с подтверждением по ключу) -----
+@dp.message(F.text == "🔄 Сброс статистики")
+async def reset_stats_admin_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя, чью статистику нужно сбросить:", reply_markup=back_keyboard())
+    await state.set_state(AdminResetStats.user_id)
+
+@dp.message(AdminResetStats.user_id, F.text)
+async def reset_stats_admin_user(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    # Генерируем ключ
+    key = await generate_reset_key(uid)
+    await state.update_data(target_uid=uid, generated_key=key)
+    await message.answer(
+        f"🔑 Сгенерирован ключ для сброса статистики пользователя {uid}:\n"
+        f"<code>{key}</code>\n\n"
+        f"⚠️ Для подтверждения сброса нажми кнопку ниже.\n"
+        f"Ключ действителен 10 минут.",
+        reply_markup=reset_stats_confirm_keyboard(uid)
+    )
+    # Состояние не завершаем, ждём подтверждения по кнопке
+
+@dp.callback_query(F.data.startswith("reset_stats_confirm_"))
+async def reset_stats_confirm(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not await check_admin_permissions(callback.from_user.id, "manage_users"):
+        await callback.answer("❌ Недостаточно прав.", show_alert=True)
+        return
+    uid = int(callback.data.split("_")[3])
+    data = await state.get_data()
+    if data.get('target_uid') != uid:
+        await callback.answer("❌ Данные устарели, начните заново.", show_alert=True)
+        await state.clear()
+        return
+    key = data.get('generated_key')
+    if await verify_reset_key(key, uid):
+        await reset_user_stats(uid)
+        await callback.message.edit_text(f"✅ Статистика пользователя {uid} успешно сброшена.")
+        await safe_send_message(uid, "🔄 Ваша статистика была сброшена администратором.")
+    else:
+        await callback.message.edit_text("❌ Ошибка при сбросе (ключ недействителен). Попробуйте снова.")
+    await state.clear()
+
+@dp.callback_query(F.data == "reset_stats_cancel")
+async def reset_stats_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text("❌ Сброс отменён.")
+
+# ----- Блокировка и разблокировка пользователей -----
+@dp.message(F.text == "⛔ Заблокировать")
+async def block_user_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя для блокировки:", reply_markup=back_keyboard())
+    await state.set_state(BlockUser.user_id)
+
+@dp.message(BlockUser.user_id, F.text)
+async def block_user_id(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    if await is_admin(uid):
+        await message.answer("❌ Нельзя заблокировать администратора.")
+        await state.clear()
+        return
+    await state.update_data(user_id=uid)
+    await message.answer("Введи причину блокировки (или отправь '-'):")
+    await state.set_state(BlockUser.reason)
+
+@dp.message(BlockUser.reason, F.text)
+async def block_user_reason(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    reason = message.text if message.text != '-' else None
+    data = await state.get_data()
+    uid = data['user_id']
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO banned_users (user_id, banned_by, banned_date, reason) VALUES ($1, $2, $3, $4) ON CONFLICT (user_id) DO UPDATE SET banned_by=$2, banned_date=$3, reason=$4",
+                uid, message.from_user.id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), reason
+            )
+        await message.answer(f"✅ Пользователь {uid} заблокирован.")
+        await safe_send_message(uid, f"⛔ Вы заблокированы в боте. Причина: {reason if reason else 'не указана'}")
+    except Exception as e:
+        logging.error(f"Block user error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "✅ Разблокировать")
+async def unblock_user_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await message.answer("Введи ID или @username пользователя для разблокировки:", reply_markup=back_keyboard())
+    await state.set_state(UnblockUser.user_id)
+
+@dp.message(UnblockUser.user_id, F.text)
+async def unblock_user_finish(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_users_menu(message)
+        return
+    user_data = await find_user_by_input(message.text)
+    if not user_data:
+        await message.answer("❌ Пользователь не найден.")
+        await state.clear()
+        return
+    uid = user_data['user_id']
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("DELETE FROM banned_users WHERE user_id=$1", uid)
+        await message.answer(f"✅ Пользователь {uid} разблокирован.")
+        await safe_send_message(uid, f"✅ Вы разблокированы в боте.")
+    except Exception as e:
+        logging.error(f"Unblock user error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ==================== УПРАВЛЕНИЕ МАГАЗИНОМ ====================
+@dp.message(F.text == "🛒 Магазин (админ)")
+async def admin_shop_menu(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_shop"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await send_with_media(message.chat.id, "Управление магазином:", media_key='admin_shop', reply_markup=admin_shop_keyboard())
+
+@dp.message(F.text == "➕ Добавить товар")
+async def add_shop_item_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_shop"):
+        return
+    await message.answer("Введи название товара:", reply_markup=back_keyboard())
+    await state.set_state(AddShopItem.name)
+
+@dp.message(AddShopItem.name, F.text)
+async def add_shop_item_name(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    await state.update_data(name=message.text)
+    await message.answer("Введи описание товара:")
+    await state.set_state(AddShopItem.description)
+
+@dp.message(AddShopItem.description, F.text)
+async def add_shop_item_description(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    await state.update_data(description=message.text)
+    await message.answer("Введи цену (можно дробную):")
+    await state.set_state(AddShopItem.price)
+
+@dp.message(AddShopItem.price, F.text)
+async def add_shop_item_price(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    try:
+        price = float(message.text)
+        if price <= 0:
+            raise ValueError
+        price = round(price, 2)
+        max_input = await get_setting_float("max_input_number")
+        if price > max_input:
+            await message.answer(f"❌ Цена слишком большая (максимум {max_input:.2f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Цена должна быть положительным числом (можно дробным).")
+        return
+    await state.update_data(price=price)
+    await message.answer("Введи количество товара (целое число, -1 для бесконечного):")
+    await state.set_state(AddShopItem.stock)
+
+@dp.message(AddShopItem.stock, F.text)
+async def add_shop_item_stock(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    try:
+        stock = int(message.text)
+        max_input = await get_setting_float("max_input_number")
+        if stock > max_input:
+            await message.answer(f"❌ Количество слишком большое (максимум {max_input}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи целое число.")
+        return
+    await state.update_data(stock=stock)
+    await message.answer("Отправь фото для товара (или 'нет'):")
+    await state.set_state(AddShopItem.photo)
+
+@dp.message(AddShopItem.photo, F.photo | F.text)
+async def add_shop_item_photo(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    photo_file_id = None
+    if message.photo:
+        photo_file_id = message.photo[-1].file_id
+    elif message.text and message.text.lower() == 'нет':
+        pass
+    else:
+        await message.answer("Отправь фото или 'нет'.")
+        return
+    data = await state.get_data()
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO shop_items (name, description, price, stock, photo_file_id) VALUES ($1, $2, $3, $4, $5)",
+                data['name'], data['description'], data['price'], data['stock'], photo_file_id
+            )
+        await message.answer("✅ Товар добавлен!", reply_markup=admin_shop_keyboard())
+    except Exception as e:
+        logging.error(f"Add shop item error: {e}")
+        await message.answer("❌ Ошибка при добавлении товара.")
+    await state.clear()
+
+@dp.message(F.text == "➖ Удалить товар")
+async def remove_shop_item_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_shop"):
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            items = await conn.fetch("SELECT id, name FROM shop_items ORDER BY id")
+        if not items:
+            await message.answer("В магазине нет товаров.")
+            return
+        text = "Товары:\n" + "\n".join([f"ID {i['id']}: {i['name']}" for i in items])
+        await message.answer(text + "\n\nВведи ID товара для удаления:", reply_markup=back_keyboard())
+    except Exception as e:
+        logging.error(f"List items for remove error: {e}")
+        await message.answer("❌ Ошибка.")
+        return
+    await state.set_state(RemoveShopItem.item_id)
+
+@dp.message(RemoveShopItem.item_id, F.text)
+async def remove_shop_item(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    try:
+        item_id = int(message.text)
+    except ValueError:
+        await message.answer("❌ Введи число.")
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("DELETE FROM shop_items WHERE id=$1", item_id)
+        await message.answer("✅ Товар удалён, если существовал.", reply_markup=admin_shop_keyboard())
+    except Exception as e:
+        logging.error(f"Remove shop item error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "✏️ Редактировать товар")
+async def edit_shop_item_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_shop"):
+        return
+    await message.answer("Введи ID товара для редактирования:", reply_markup=back_keyboard())
+    await state.set_state(EditShopItem.item_id)
+
+@dp.message(EditShopItem.item_id, F.text)
+async def edit_shop_item_id(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    try:
+        item_id = int(message.text)
+    except ValueError:
+        await message.answer("❌ Введи число.")
+        return
+    await state.update_data(item_id=item_id)
+    await message.answer("Что хочешь изменить? (price/stock)")
+    await state.set_state(EditShopItem.field)
+
+@dp.message(EditShopItem.field, F.text)
+async def edit_shop_item_field(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    field = message.text.lower()
+    if field not in ['price', 'stock']:
+        await message.answer("❌ Можно изменить только price или stock.")
+        return
+    await state.update_data(field=field)
+    await message.answer(f"Введи новое значение для {field}:")
+    await state.set_state(EditShopItem.value)
+
+@dp.message(EditShopItem.value, F.text)
+async def edit_shop_item_value(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_shop_menu(message)
+        return
+    data = await state.get_data()
+    item_id = data['item_id']
+    field = data['field']
+
+    try:
+        if field == 'price':
+            value = float(message.text)
+            if value <= 0:
+                raise ValueError
+            value = round(value, 2)
+            max_input = await get_setting_float("max_input_number")
+            if value > max_input:
+                await message.answer(f"❌ Цена слишком большая (максимум {max_input:.2f}).")
+                return
+        else:  # stock
+            value = int(message.text)
+            max_input = await get_setting_float("max_input_number")
+            if value > max_input:
+                await message.answer(f"❌ Количество слишком большое (максимум {max_input}).")
+                return
+    except ValueError:
+        await message.answer("❌ Введи корректное число.")
+        return
+
+    async with db_pool.acquire() as conn:
+        if field == 'price':
+            await conn.execute("UPDATE shop_items SET price=$1 WHERE id=$2", value, item_id)
+        else:  # stock
+            await conn.execute("UPDATE shop_items SET stock=$1 WHERE id=$2", value, item_id)
+    await message.answer("✅ Товар обновлён.", reply_markup=admin_shop_keyboard())
+    await state.clear()
+
+# ----- Список товаров (с исправленной пагинацией) -----
+@dp.message(F.text == "📋 Список товаров")
+async def list_shop_items(message: Message, page: int = 1):
+    if not await check_admin_permissions(message.from_user.id, "manage_shop"):
+        return
+
+    offset = (page - 1) * ITEMS_PER_PAGE
+    try:
+        async with db_pool.acquire() as conn:
+            total = await conn.fetchval("SELECT COUNT(*) FROM shop_items")
+            items = await conn.fetch(
+                "SELECT id, name, description, price, stock, photo_file_id FROM shop_items ORDER BY id LIMIT $1 OFFSET $2",
+                ITEMS_PER_PAGE, offset
+            )
+        if not items:
+            await message.answer("В магазине нет товаров.")
+            return
+        text = f"📦 Товары (страница {page}):\n"
+        for item in items:
+            text += f"\nID {item['id']} | {item['name']}\n{item['description']}\n💰 {float(item['price']):.2f} | наличие: {item['stock'] if item['stock']!=-1 else '∞'}\n"
+        kb = []
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"shopitems_page_{page-1}"))
+        if offset + ITEMS_PER_PAGE < total:
+            nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"shopitems_page_{page+1}"))
+        if nav_buttons:
+            kb.append(nav_buttons)
+        if kb:
+            await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        else:
+            await message.answer(text, reply_markup=admin_shop_keyboard())
+    except Exception as e:
+        logging.error(f"List shop items error: {e}")
+        await message.answer("❌ Ошибка.")
+
+@dp.callback_query(F.data.startswith("shopitems_page_"))
+async def shopitems_page_callback(callback: CallbackQuery):
+    await callback.answer()
+    page = int(callback.data.split("_")[2])
+    await list_shop_items(callback.message, page=page)
+
+# ----- Список покупок (с исправленной пагинацией и возвратом средств при отказе) -----
+@dp.message(F.text == "🛍️ Список покупок")
+async def admin_purchases(message: Message, page: int = 1):
+    """Вывод списка необработанных покупок с пагинацией."""
+    if not await check_admin_permissions(message.from_user.id, "manage_shop"):
+        return
+
+    offset = (page - 1) * ITEMS_PER_PAGE
+    try:
+        async with db_pool.acquire() as conn:
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM purchases WHERE status='pending'"
+            )
+            rows = await conn.fetch(
+                "SELECT p.id, u.user_id, u.username, s.name, p.purchase_date, p.status FROM purchases p "
+                "JOIN users u ON p.user_id = u.user_id JOIN shop_items s ON p.item_id = s.id "
+                "WHERE p.status='pending' ORDER BY p.purchase_date LIMIT $1 OFFSET $2",
+                ITEMS_PER_PAGE, offset
+            )
+        if not rows:
+            await message.answer("Нет необработанных покупок.")
+            return
+
+        text = f"🛍️ Необработанные покупки (страница {page}):\n\n"
+        for row in rows:
+            pid, uid, username, item_name, date, status = row['id'], row['user_id'], row['username'] or "нет username", row['name'], row['purchase_date'].strftime("%Y-%m-%d %H:%M:%S"), row['status']
+            text += f"🆔 {pid}\nПользователь: {uid} (@{username})\nТовар: {item_name}\nДата: {date}\n\n"
+
+        # Пагинация
+        kb = []
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"admin_purchases_page_{page-1}"))
+        if offset + ITEMS_PER_PAGE < total:
+            nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"admin_purchases_page_{page+1}"))
+        if nav_buttons:
+            kb.append(nav_buttons)
+        await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb) if kb else None)
+    except Exception as e:
+        logging.error(f"Admin purchases error: {e}")
+        await message.answer("❌ Ошибка загрузки покупок.")
+
+@dp.callback_query(F.data.startswith("admin_purchases_page_"))
+async def admin_purchases_page_callback(callback: CallbackQuery):
+    await callback.answer()
+    page = int(callback.data.split("_")[3])
+    await admin_purchases(callback.message, page=page)
+
+@dp.callback_query(F.data.startswith("purchase_done_"))
+async def purchase_done(callback: CallbackQuery):
+    await callback.answer()
+    if not await check_admin_permissions(callback.from_user.id, "manage_shop"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    purchase_id = int(callback.data.split("_")[2])
+    try:
+        async with db_pool.acquire() as conn:
+            # Проверяем, что покупка ещё не обработана
+            status = await conn.fetchval("SELECT status FROM purchases WHERE id=$1", purchase_id)
+            if status != 'pending':
+                await callback.answer("❌ Покупка уже обработана.", show_alert=True)
+                return
+            await conn.execute("UPDATE purchases SET status='completed' WHERE id=$1", purchase_id)
+            user_id = await conn.fetchval("SELECT user_id FROM purchases WHERE id=$1", purchase_id)
+            if user_id:
+                await safe_send_message(user_id, "✅ Твоя покупка обработана! Админ выслал подарок.")
+        await callback.answer("Покупка отмечена как выполненная")
+        await callback.message.delete()
+    except Exception as e:
+        logging.error(f"Purchase done error: {e}")
+        await callback.answer("Ошибка", show_alert=True)
+
+@dp.callback_query(F.data.startswith("purchase_reject_"))
+async def purchase_reject(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    if not await check_admin_permissions(callback.from_user.id, "manage_shop"):
+        await callback.answer("Недостаточно прав", show_alert=True)
+        return
+    purchase_id = int(callback.data.split("_")[2])
+    # Проверяем статус и возвращаем средства
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            status = await conn.fetchval("SELECT status FROM purchases WHERE id=$1", purchase_id)
+            if status != 'pending':
+                await callback.answer("❌ Покупка уже обработана.", show_alert=True)
+                return
+            # Получаем информацию о покупке
+            purchase = await conn.fetchrow("SELECT user_id, item_id FROM purchases WHERE id=$1", purchase_id)
+            if not purchase:
+                await callback.answer("❌ Покупка не найдена.", show_alert=True)
+                return
+            user_id = purchase['user_id']
+            item_id = purchase['item_id']
+            # Получаем цену товара
+            price = await conn.fetchval("SELECT price FROM shop_items WHERE id=$1", item_id)
+            if price is None:
+                await callback.answer("❌ Товар не найден.", show_alert=True)
+                return
+            # Возвращаем средства
+            await update_user_balance(user_id, float(price), conn=conn, allow_negative=False)
+            # Возвращаем товар на склад
+            await conn.execute("UPDATE shop_items SET stock = stock + 1 WHERE id=$1 AND stock != -1", item_id)
+            # Обновляем статус покупки
+            await conn.execute("UPDATE purchases SET status='rejected' WHERE id=$1", purchase_id)
+
+    await state.update_data(purchase_id=purchase_id)
+    await callback.message.answer("Введи причину отказа (или отправь '-'):", reply_markup=back_keyboard())
+    await state.set_state(PurchaseReject.comment)
+
+@dp.message(PurchaseReject.comment, F.text)
+async def purchase_reject_comment(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_purchases(message)
+        return
+    comment = message.text if message.text != '-' else None
+    data = await state.get_data()
+    purchase_id = data.get('purchase_id')
+    if not purchase_id:
+        await message.answer("❌ Ошибка: ID покупки не найден.")
+        await state.clear()
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE purchases SET admin_comment=$1 WHERE id=$2", comment, purchase_id)
+            user_id = await conn.fetchval("SELECT user_id FROM purchases WHERE id=$1", purchase_id)
+            if user_id:
+                await safe_send_message(user_id, f"❌ К сожалению, твоя покупка не может быть выполнена. Комментарий админа: {comment if comment else 'не указан'}")
+        await message.answer("✅ Покупка отклонена, комментарий сохранён, средства возвращены.")
+    except Exception as e:
+        logging.error(f"Purchase reject error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+    await admin_purchases(message)
+
+# ==================== УПРАВЛЕНИЕ КАНАЛАМИ ====================
+@dp.message(F.text == "📢 Каналы")
+async def admin_channel_menu(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_channels"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await send_with_media(message.chat.id, "Управление каналами:", media_key='admin_channels', reply_markup=admin_channel_keyboard())
+
+@dp.message(F.text == "➕ Добавить канал")
+async def add_channel_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_channels"):
+        return
+    await message.answer("Введи chat_id канала (можно получить у @username_to_id_bot):", reply_markup=back_keyboard())
+    await state.set_state(AddChannel.chat_id)
+
+@dp.message(AddChannel.chat_id, F.text)
+async def add_channel_chat_id(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_channel_menu(message)
+        return
+    await state.update_data(chat_id=message.text.strip())
+    await message.answer("Введи название канала:")
+    await state.set_state(AddChannel.title)
+
+@dp.message(AddChannel.title, F.text)
+async def add_channel_title(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_channel_menu(message)
+        return
+    await state.update_data(title=message.text)
+    await message.answer("Введи invite-ссылку (или отправь 'нет'):")
+    await state.set_state(AddChannel.invite_link)
+
+@dp.message(AddChannel.invite_link, F.text)
+async def add_channel_link(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_channel_menu(message)
+        return
+    link = None if message.text.lower() == 'нет' else message.text.strip()
+    data = await state.get_data()
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO channels (chat_id, title, invite_link) VALUES ($1, $2, $3)",
+                data['chat_id'], data['title'], link
+            )
+        await message.answer("✅ Канал добавлен!", reply_markup=admin_channel_keyboard())
+    except asyncpg.UniqueViolationError:
+        await message.answer("❌ Канал с таким chat_id уже существует.")
+    except Exception as e:
+        logging.error(f"Add channel error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "➖ Удалить канал")
+async def remove_channel_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_channels"):
+        return
+    await message.answer("Введи chat_id канала для удаления:", reply_markup=back_keyboard())
+    await state.set_state(RemoveChannel.chat_id)
+
+@dp.message(RemoveChannel.chat_id, F.text)
+async def remove_channel(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_channel_menu(message)
+        return
+    chat_id = message.text.strip()
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute("DELETE FROM channels WHERE chat_id=$1", chat_id)
+        await message.answer("✅ Канал удалён, если существовал.", reply_markup=admin_channel_keyboard())
+    except Exception as e:
+        logging.error(f"Remove channel error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+@dp.message(F.text == "📋 Список каналов")
+async def list_channels(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_channels"):
+        return
+    channels = await get_channels()
+    if not channels:
+        await message.answer("Нет добавленных каналов.")
+        return
+    text = "📺 Каналы для подписки:\n"
+    for chat_id, title, link in channels:
+        text += f"• {title} (chat_id: {chat_id})\n  Ссылка: {link or 'нет'}\n"
+    parts = safe_split_text(text)
+    for part in parts:
+        await message.answer(part, reply_markup=admin_channel_keyboard())
+
+# ==================== УПРАВЛЕНИЕ ПРОМОКОДАМИ ====================
+@dp.message(F.text == "🎫 Промокоды")
+async def admin_promo_menu(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_promocodes"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await send_with_media(message.chat.id, "Управление промокодами:", media_key='admin_promo', reply_markup=admin_promo_keyboard())
+
+@dp.message(F.text == "➕ Создать промокод")
+async def create_promo_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_promocodes"):
+        return
+    await message.answer("Введи код промокода (латиница, цифры):", reply_markup=back_keyboard())
+    await state.set_state(CreatePromocode.code)
+
+@dp.message(CreatePromocode.code, F.text)
+async def create_promo_code(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_promo_menu(message)
+        return
+    code = message.text.strip().upper()
+    await state.update_data(code=code)
+    await message.answer("Введи количество (баксов или биткоинов):")
+    await state.set_state(CreatePromocode.reward)
+
+@dp.message(CreatePromocode.reward, F.text)
+async def create_promo_reward(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_promo_menu(message)
+        return
+    try:
+        reward = float(message.text)
+        if reward <= 0:
+            raise ValueError
+        reward = round(reward, 4) if reward < 1 else round(reward, 2)
+        max_input = await get_setting_float("max_input_number")
+        if reward > max_input:
+            await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.4f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи положительное число (можно дробное).")
+        return
+    await state.update_data(reward=reward)
+    await message.answer("Выбери тип награды:", reply_markup=promo_type_keyboard())
+    await state.set_state(CreatePromocode.reward_type)
+
+@dp.callback_query(CreatePromocode.reward_type, F.data.startswith("promo_type_"))
+async def create_promo_reward_type(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    reward_type = callback.data.split("_")[2]
+    await state.update_data(reward_type=reward_type)
+    await callback.message.edit_text("Введи максимальное количество использований (целое число):")
+    await state.set_state(CreatePromocode.max_uses)
+
+@dp.message(CreatePromocode.max_uses, F.text)
+async def create_promo_max_uses(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_promo_menu(message)
+        return
+    try:
+        max_uses = int(message.text)
+        if max_uses <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO promocodes (code, reward, reward_type, max_uses, created_at, created_by) VALUES ($1, $2, $3, $4, $5, $6)",
+                data['code'], data['reward'], data['reward_type'], max_uses, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), message.from_user.id
+            )
+        await message.answer("✅ Промокод создан!", reply_markup=admin_promo_keyboard())
+    except asyncpg.UniqueViolationError:
+        await message.answer("❌ Промокод с таким кодом уже существует.")
+    except Exception as e:
+        logging.error(f"Create promo error: {e}")
+        await message.answer("❌ Ошибка.")
+    await state.clear()
+
+# ----- Список промокодов (с исправленной пагинацией) -----
+@dp.message(F.text == "📋 Список промокодов")
+async def list_promos(message: Message, page: int = 1):
+    if not await check_admin_permissions(message.from_user.id, "manage_promocodes"):
+        return
+
+    offset = (page - 1) * ITEMS_PER_PAGE
+    try:
+        async with db_pool.acquire() as conn:
+            total = await conn.fetchval("SELECT COUNT(*) FROM promocodes")
+            rows = await conn.fetch(
+                "SELECT code, reward, reward_type, max_uses, used_count FROM promocodes LIMIT $1 OFFSET $2",
+                ITEMS_PER_PAGE, offset
+            )
+        if not rows:
+            await message.answer("Нет промокодов.")
+            return
+        text = f"🎫 Промокоды (страница {page}):\n"
+        for row in rows:
+            reward_type_str = "₿" if row['reward_type'] == 'bitcoin' else "💰"
+            reward_val = float(row['reward'])
+            if row['reward_type'] == 'bitcoin':
+                reward_str = f"{reward_val:.4f} BTC"
+            else:
+                reward_str = f"{reward_val:.2f} баксов"
+            text += f"• {row['code']}: {reward_type_str} {reward_str}, использовано {row['used_count']}/{row['max_uses']}\n"
+        kb = []
+        nav_buttons = []
+        if page > 1:
+            nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"promos_page_{page-1}"))
+        if offset + ITEMS_PER_PAGE < total:
+            nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"promos_page_{page+1}"))
+        if nav_buttons:
+            kb.append(nav_buttons)
+        if kb:
+            await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        else:
+            await message.answer(text, reply_markup=admin_promo_keyboard())
+    except Exception as e:
+        logging.error(f"List promos error: {e}")
+        await message.answer("❌ Ошибка.")
+
+@dp.callback_query(F.data.startswith("promos_page_"))
+async def promos_page_callback(callback: CallbackQuery):
+    await callback.answer()
+    page = int(callback.data.split("_")[2])
+    await list_promos(callback.message, page=page)
+
+# ==================== УПРАВЛЕНИЕ ЧАТАМИ ====================
+@dp.message(F.text == "🤖 Чаты")
+async def admin_chats_menu(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_chats"):
+        await message.answer("❌ Недостаточно прав.")
+        return
+    await send_with_media(message.chat.id, "Управление чатами:", media_key='admin_chats', reply_markup=admin_chats_keyboard())
+
+@dp.message(F.text == "📋 Список запросов на подтверждение")
+async def list_pending_requests(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_chats"):
+        return
+    requests = await get_pending_chat_requests()
+    if not requests:
+        await message.answer("Нет ожидающих запросов.")
+        return
+    text = "📋 Ожидающие запросы:\n\n"
+    for req in requests:
+        text += f"• {req['title']} (ID: {req['chat_id']})\n  Запросил: {req['requested_by']} ({req['request_date']})\n"
+    parts = safe_split_text(text)
+    for part in parts:
+        await message.answer(part)
+
+@dp.message(F.text == "✅ Подтвердить чат")
+async def confirm_chat_manual(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_chats"):
+        return
+    await message.answer("Введи ID чата, который хочешь подтвердить:", reply_markup=back_keyboard())
+    await state.set_state(ManageChats.chat_id)
+    await state.update_data(action="confirm")
+
+@dp.message(F.text == "❌ Отклонить запрос")
+async def reject_chat_manual(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_chats"):
+        return
+    await message.answer("Введи ID чата, запрос которого хочешь отклонить:", reply_markup=back_keyboard())
+    await state.set_state(ManageChats.chat_id)
+    await state.update_data(action="reject")
+
+@dp.message(F.text == "🗑 Удалить чат из подтверждённых")
+async def remove_confirmed_chat_start(message: Message, state: FSMContext):
+    if not await check_admin_permissions(message.from_user.id, "manage_chats"):
+        return
+    await message.answer("Введи ID чата, который нужно удалить из подтверждённых:", reply_markup=back_keyboard())
+    await state.set_state(ManageChats.chat_id)
+    await state.update_data(action="remove")
+
+@dp.message(ManageChats.chat_id, F.text)
+async def process_chat_id(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_chats_menu(message)
+        return
+    try:
+        chat_id = int(message.text)
+    except:
+        await message.answer("❌ Введи число.")
+        await state.clear()
+        return
+    data = await state.get_data()
+    action = data.get('action')
+    async with db_pool.acquire() as conn:
+        if action == "confirm":
+            request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+            if request:
+                await add_confirmed_chat(chat_id, request['title'], request['type'], message.from_user.id)
+                await update_chat_request_status(chat_id, 'approved')
+                await message.answer(f"✅ Чат {request['title']} подтверждён.")
+                await safe_send_message(request['requested_by'], f"✅ Ваш чат «{request['title']}» активирован!")
+            else:
+                try:
+                    chat = await bot.get_chat(chat_id)
+                    await add_confirmed_chat(chat_id, chat.title, chat.type, message.from_user.id)
+                    await message.answer(f"✅ Чат {chat.title} подтверждён.")
+                except:
+                    await message.answer("❌ Не удалось получить информацию о чате.")
+        elif action == "reject":
+            request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+            if not request:
+                await message.answer("❌ Запрос не найден.")
+                await state.clear()
+                return
+            await update_chat_request_status(chat_id, 'rejected')
+            await message.answer(f"❌ Запрос для чата {request['title']} отклонён.")
+            await safe_send_message(request['requested_by'], f"❌ Запрос на активацию чата «{request['title']}» отклонён.")
+        elif action == "remove":
+            await remove_confirmed_chat(chat_id)
+            await message.answer(f"✅ Чат {chat_id} удалён из подтверждённых.")
+    await state.clear()
+
+@dp.message(F.text == "📋 Список подтверждённых чатов")
+async def list_confirmed_chats(message: Message):
+    if not await check_admin_permissions(message.from_user.id, "manage_chats"):
+        return
+    confirmed = await get_confirmed_chats(force_update=True)
+    if not confirmed:
+        await message.answer("Нет подтверждённых чатов.")
+        return
+    text = "✅ Подтверждённые чаты:\n\n"
+    for chat_id, data in confirmed.items():
+        text += f"• {data['title']} (ID: {chat_id})\n  Подтверждён: {data.get('confirmed_date', 'неизвестно')}\n"
+    parts = safe_split_text(text)
+    for part in parts:
+        await message.answer(part)
+
+# ==================== ОБРАБОТЧИКИ ИНЛАЙН-КНОПОК ДЛЯ ПОДТВЕРЖДЕНИЯ ЧАТА ====================
+@dp.callback_query(F.data.startswith("confirm_chat_"))
+async def confirm_chat_callback(callback: CallbackQuery):
+    await callback.answer()
+    if not await check_admin_permissions(callback.from_user.id, "manage_chats"):
+        await callback.answer("❌ Недостаточно прав.", show_alert=True)
+        return
+    chat_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+        if not request:
+            await callback.answer("❌ Запрос не найден.", show_alert=True)
+            return
+        await add_confirmed_chat(chat_id, request['title'], request['type'], callback.from_user.id)
+        await update_chat_request_status(chat_id, 'approved')
+        await callback.message.edit_text(f"✅ Чат {request['title']} подтверждён.")
+        await safe_send_message(request['requested_by'], f"✅ Ваш чат «{request['title']}» активирован!")
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("reject_chat_"))
+async def reject_chat_callback(callback: CallbackQuery):
+    await callback.answer()
+    if not await check_admin_permissions(callback.from_user.id, "manage_chats"):
+        await callback.answer("❌ Недостаточно прав.", show_alert=True)
+        return
+    chat_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+        if not request:
+            await callback.answer("❌ Запрос не найден.", show_alert=True)
+            return
+        await update_chat_request_status(chat_id, 'rejected')
+        await callback.message.edit_text(f"❌ Запрос для чата {request['title']} отклонён.")
+        await safe_send_message(request['requested_by'], f"❌ Запрос на активацию чата «{request['title']}» отклонён.")
+    await callback.answer()
+
+# ==================== КОНЕЦ ЧАСТИ 5.1 ====================
