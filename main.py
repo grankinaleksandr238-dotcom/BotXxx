@@ -3619,121 +3619,121 @@ def admin_main_keyboard(permissions: List[str]):
 
 def admin_users_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("💰 Начислить баксы"), KeyboardButton("💸 Списать баксы")],
-        [KeyboardButton("⭐️ Начислить репутацию"), KeyboardButton("🔻 Снять репутацию")],
-        [KeyboardButton("📈 Начислить опыт"), KeyboardButton("🔝 Установить уровень")],
-        [KeyboardButton("₿ Начислить биткоины"), KeyboardButton("₿ Списать биткоины")],
-        [KeyboardButton("⚔️ Начислить авторитет"), KeyboardButton("⚔️ Списать авторитет")],
-        [KeyboardButton("👥 Найти пользователя"), KeyboardButton("📊 Экспорт пользователей")],
-        [KeyboardButton("🔄 Сброс статистики")],
-        [KeyboardButton("⛔ Заблокировать"), KeyboardButton("✅ Разблокировать")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="💰 Начислить баксы"), KeyboardButton(text="💸 Списать баксы")],
+        [KeyboardButton(text="⭐️ Начислить репутацию"), KeyboardButton(text="🔻 Снять репутацию")],
+        [KeyboardButton(text="📈 Начислить опыт"), KeyboardButton(text="🔝 Установить уровень")],
+        [KeyboardButton(text="₿ Начислить биткоины"), KeyboardButton(text="₿ Списать биткоины")],
+        [KeyboardButton(text="⚔️ Начислить авторитет"), KeyboardButton(text="⚔️ Списать авторитет")],
+        [KeyboardButton(text="👥 Найти пользователя"), KeyboardButton(text="📊 Экспорт пользователей")],
+        [KeyboardButton(text="🔄 Сброс статистики")],
+        [KeyboardButton(text="⛔ Заблокировать"), KeyboardButton(text="✅ Разблокировать")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_shop_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Добавить товар")],
-        [KeyboardButton("➖ Удалить товар")],
-        [KeyboardButton("✏️ Редактировать товар")],
-        [KeyboardButton("📋 Список товаров")],
-        [KeyboardButton("🛍️ Список покупок")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Добавить товар")],
+        [KeyboardButton(text="➖ Удалить товар")],
+        [KeyboardButton(text="✏️ Редактировать товар")],
+        [KeyboardButton(text="📋 Список товаров")],
+        [KeyboardButton(text="🛍️ Список покупок")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_giveaway_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Создать розыгрыш")],
-        [KeyboardButton("📋 Активные розыгрыши (админ)")],
-        [KeyboardButton("✅ Завершить розыгрыш")],
-        [KeyboardButton("📋 Завершённые розыгрыши (админ)")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Создать розыгрыш")],
+        [KeyboardButton(text="📋 Активные розыгрыши (админ)")],
+        [KeyboardButton(text="✅ Завершить розыгрыш")],
+        [KeyboardButton(text="📋 Завершённые розыгрыши (админ)")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_channel_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Добавить канал")],
-        [KeyboardButton("➖ Удалить канал")],
-        [KeyboardButton("📋 Список каналов")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Добавить канал")],
+        [KeyboardButton(text="➖ Удалить канал")],
+        [KeyboardButton(text="📋 Список каналов")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_promo_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Создать промокод")],
-        [KeyboardButton("📋 Список промокодов")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Создать промокод")],
+        [KeyboardButton(text="📋 Список промокодов")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_business_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("📋 Список бизнесов")],
-        [KeyboardButton("➕ Добавить бизнес")],
-        [KeyboardButton("✏️ Редактировать бизнес")],
-        [KeyboardButton("🔄 Переключить доступность")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="📋 Список бизнесов")],
+        [KeyboardButton(text="➕ Добавить бизнес")],
+        [KeyboardButton(text="✏️ Редактировать бизнес")],
+        [KeyboardButton(text="🔄 Переключить доступность")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_exchange_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("📋 Активные заявки")],
-        [KeyboardButton("❌ Удалить заявку (по ID)")],
-        [KeyboardButton("📊 История сделок")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="📋 Активные заявки")],
+        [KeyboardButton(text="❌ Удалить заявку (по ID)")],
+        [KeyboardButton(text="📊 История сделок")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_media_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Добавить медиа")],
-        [KeyboardButton("➖ Удалить медиа")],
-        [KeyboardButton("📋 Список медиа")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Добавить медиа")],
+        [KeyboardButton(text="➖ Удалить медиа")],
+        [KeyboardButton(text="📋 Список медиа")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_chats_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("📋 Список запросов на подтверждение")],
-        [KeyboardButton("✅ Подтвердить чат")],
-        [KeyboardButton("❌ Отклонить запрос")],
-        [KeyboardButton("🗑 Удалить чат из подтверждённых")],
-        [KeyboardButton("📋 Список подтверждённых чатов")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="📋 Список запросов на подтверждение")],
+        [KeyboardButton(text="✅ Подтвердить чат")],
+        [KeyboardButton(text="❌ Отклонить запрос")],
+        [KeyboardButton(text="🗑 Удалить чат из подтверждённых")],
+        [KeyboardButton(text="📋 Список подтверждённых чатов")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_tasks_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Создать задание")],
-        [KeyboardButton("📋 Список заданий")],
-        [KeyboardButton("❌ Удалить задание")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Создать задание")],
+        [KeyboardButton(text="📋 Список заданий")],
+        [KeyboardButton(text="❌ Удалить задание")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def admin_admins_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("➕ Добавить администратора")],
-        [KeyboardButton("✏️ Редактировать права")],
-        [KeyboardButton("➖ Удалить администратора")],
-        [KeyboardButton("📋 Список администраторов")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="➕ Добавить администратора")],
+        [KeyboardButton(text="✏️ Редактировать права")],
+        [KeyboardButton(text="➖ Удалить администратора")],
+        [KeyboardButton(text="📋 Список администраторов")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def settings_categories_keyboard():
     return ReplyKeyboardMarkup(keyboard=[
-        [KeyboardButton("⚙️ Казино")],
-        [KeyboardButton("⚙️ Кража")],
-        [KeyboardButton("⚙️ Кидалово (PVP)")],
-        [KeyboardButton("⚙️ Налёты")],
-        [KeyboardButton("⚙️ Бизнесы")],
-        [KeyboardButton("⚙️ Опыт и уровни")],
-        [KeyboardButton("⚙️ Рефералы")],
-        [KeyboardButton("⚙️ Подгон")],
-        [KeyboardButton("⚙️ Биткоин-биржа")],
-        [KeyboardButton("⚙️ Автоудаление")],
-        [KeyboardButton("⚙️ Прокачка навыков")],
-        [KeyboardButton("⚙️ Контрабанда")],
-        [KeyboardButton("⚙️ Тюрьма")],
-        [KeyboardButton("⚙️ Задания")],
-        [KeyboardButton("⚙️ Промокоды")],
-        [KeyboardButton("◀️ Назад в админку")]
+        [KeyboardButton(text="⚙️ Казино")],
+        [KeyboardButton(text="⚙️ Кража")],
+        [KeyboardButton(text="⚙️ Кидалово (PVP)")],
+        [KeyboardButton(text="⚙️ Налёты")],
+        [KeyboardButton(text="⚙️ Бизнесы")],
+        [KeyboardButton(text="⚙️ Опыт и уровни")],
+        [KeyboardButton(text="⚙️ Рефералы")],
+        [KeyboardButton(text="⚙️ Подгон")],
+        [KeyboardButton(text="⚙️ Биткоин-биржа")],
+        [KeyboardButton(text="⚙️ Автоудаление")],
+        [KeyboardButton(text="⚙️ Прокачка навыков")],
+        [KeyboardButton(text="⚙️ Контрабанда")],
+        [KeyboardButton(text="⚙️ Тюрьма")],
+        [KeyboardButton(text="⚙️ Задания")],
+        [KeyboardButton(text="⚙️ Промокоды")],
+        [KeyboardButton(text="◀️ Назад в админку")]
     ], resize_keyboard=True)
 
 def settings_param_keyboard(params: List[Tuple[str, str]], category: str):
@@ -3778,7 +3778,7 @@ def chat_help_text() -> str:
         "• /myheist – информация о твоём участии в налёте\n"
         "• <b>🎁 Подгон</b> – кнопка в меню (если включено)\n\n"
         "⏳ <i>Глобальный кулдаун между действиями – 1 час.</i>"
-    )
+)
 # ==================== КОНЕЦ ЧАСТИ 2 ====================
 # ==================== ЧАСТЬ 3: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ (ЛИЧНЫЕ СООБЩЕНИЯ) ====================
 
