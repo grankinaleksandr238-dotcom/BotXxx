@@ -3576,43 +3576,42 @@ def admin_main_keyboard(permissions: List[str]):
     builder = ReplyKeyboardBuilder()
     row1 = []
     if "manage_users" in permissions:
-        row1.append(KeyboardButton("👥 Пользователи"))
-    # ... остальной код без изменений
+        row1.append(KeyboardButton(text="👥 Пользователи"))
     if "manage_shop" in permissions:
-        row1.append(KeyboardButton("🛒 Магазин"))
+        row1.append(KeyboardButton(text="🛒 Магазин"))
     if "manage_giveaways" in permissions:
-        row1.append(KeyboardButton("🎁 Розыгрыши"))
+        row1.append(KeyboardButton(text="🎁 Розыгрыши"))
     if row1:
         builder.row(*row1)
     row2 = []
     if "manage_channels" in permissions:
-        row2.append(KeyboardButton("📢 Каналы"))
+        row2.append(KeyboardButton(text="📢 Каналы"))
     if "manage_chats" in permissions:
-        row2.append(KeyboardButton("🤖 Чаты"))
+        row2.append(KeyboardButton(text="🤖 Чаты"))
     if "manage_promocodes" in permissions:
-        row2.append(KeyboardButton("🎫 Промокоды"))
+        row2.append(KeyboardButton(text="🎫 Промокоды"))
     if row2:
         builder.row(*row2)
     row3 = []
     if "manage_businesses" in permissions:
-        row3.append(KeyboardButton("🏪 Бизнесы"))
+        row3.append(KeyboardButton(text="🏪 Бизнесы"))
     if "manage_exchange" in permissions:
-        row3.append(KeyboardButton("💼 Биржа"))
+        row3.append(KeyboardButton(text="💼 Биржа"))
     if "manage_media" in permissions:
-        row3.append(KeyboardButton("🖼 Медиа"))
+        row3.append(KeyboardButton(text="🖼 Медиа"))
     if row3:
         builder.row(*row3)
     row4 = []
     if "view_stats" in permissions:
-        row4.append(KeyboardButton("📊 Статистика"))
+        row4.append(KeyboardButton(text="📊 Статистика"))
     if "broadcast" in permissions:
-        row4.append(KeyboardButton("📢 Рассылка"))
+        row4.append(KeyboardButton(text="📢 Рассылка"))
     if "edit_settings" in permissions:
-        row4.append(KeyboardButton("⚙️ Настройки"))
+        row4.append(KeyboardButton(text="⚙️ Настройки"))
     if "cleanup" in permissions:
-        row4.append(KeyboardButton("🧹 Очистка"))
+        row4.append(KeyboardButton(text="🧹 Очистка"))
     if "manage_admins" in permissions:
-        row4.append(KeyboardButton("👑 Администраторы"))
+        row4.append(KeyboardButton(text="👑 Администраторы"))
     if row4:
         builder.row(*row4)
     builder.row(KeyboardButton(text="◀️ Назад в главное меню"))
