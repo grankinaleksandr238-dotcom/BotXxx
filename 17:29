@@ -1,4 +1,4 @@
-# ==================== ЧАСТЬ 1.1: ИМПОРТЫ, НАСТРОЙКИ, БД, КЕШИРОВАНИЕ, ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ЧАСТЬ 1) ====================
+   # ==================== ЧАСТЬ 1.1: ИМПОРТЫ, НАСТРОЙКИ, БД, КЕШИРОВАНИЕ, ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (ЧАСТЬ 1) ====================
 
 import asyncio
 import logging
@@ -1730,18 +1730,28 @@ async def is_chat_confirmed(chat_id: int) -> bool:
     return chat_id in confirmed
 
 @db_retry()
-async def add_confirmed_chat(chat_id: int, title: str, chat_type: str, confirmed_by: int):
-    async with db_pool.acquire() as conn:
+async def add_confirmed_chat(chat_id: int, title: str, chat_type: str, confirmed_by: int, conn=None):
+    async def _add(conn):
         await conn.execute(
             "INSERT INTO confirmed_chats (chat_id, title, type, joined_date, confirmed_by, confirmed_date) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (chat_id) DO UPDATE SET confirmed_by=$5, confirmed_date=$6",
             chat_id, title, chat_type, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), confirmed_by, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         )
+    if conn:
+        await _add(conn)
+    else:
+        async with db_pool.acquire() as new_conn:
+            await _add(new_conn)
     await get_confirmed_chats(force_update=True)
 
 @db_retry()
-async def remove_confirmed_chat(chat_id: int):
-    async with db_pool.acquire() as conn:
+async def remove_confirmed_chat(chat_id: int, conn=None):
+    async def _remove(conn):
         await conn.execute("DELETE FROM confirmed_chats WHERE chat_id=$1", chat_id)
+    if conn:
+        await _remove(conn)
+    else:
+        async with db_pool.acquire() as new_conn:
+            await _remove(new_conn)
     await get_confirmed_chats(force_update=True)
 
 @db_retry()
@@ -1759,9 +1769,14 @@ async def get_pending_chat_requests() -> List[dict]:
         return [dict(r) for r in rows]
 
 @db_retry()
-async def update_chat_request_status(chat_id: int, status: str):
-    async with db_pool.acquire() as conn:
+async def update_chat_request_status(chat_id: int, status: str, conn=None):
+    async def _update(conn):
         await conn.execute("UPDATE chat_confirmation_requests SET status=$1 WHERE chat_id=$2", status, chat_id)
+    if conn:
+        await _update(conn)
+    else:
+        async with db_pool.acquire() as new_conn:
+            await _update(new_conn)
 
 # ==================== ПРОВЕРКА ПОДПИСКИ ====================
 async def check_subscription(user_id: int):
@@ -2007,9 +2022,14 @@ async def get_user_reputation(user_id: int) -> int:
         return rep if rep is not None else 0
 
 @db_retry()
-async def update_user_reputation(user_id: int, delta: int):
-    async with db_pool.acquire() as conn:
+async def update_user_reputation(user_id: int, delta: int, conn=None):
+    async def _update(conn):
         await conn.execute("UPDATE users SET reputation = reputation + $1 WHERE user_id=$2", delta, user_id)
+    if conn:
+        await _update(conn)
+    else:
+        async with db_pool.acquire() as new_conn:
+            await _update(new_conn)
 
 @db_retry()
 async def get_user_skills(user_id: int) -> dict:
@@ -2129,7 +2149,7 @@ async def add_exp(user_id: int, exp: int, conn=None) -> Optional[str]:
             if total_coins > 0:
                 await update_user_balance(user_id, total_coins, conn=conn, allow_negative=False)
             if total_rep > 0:
-                await update_user_reputation(user_id, total_rep)
+                await update_user_reputation(user_id, total_rep, conn=conn)
 
             # Формируем сообщение
             reward_summary = []
@@ -2302,6 +2322,8 @@ async def collect_business_income(user_id: int, business_id: int, conn=None) -> 
         last_col = biz['last_collection']
         if last_col:
             last_date = last_col
+            if last_date.tzinfo is None:
+                last_date = last_date.replace(tzinfo=timezone.utc)
         else:
             last_date = datetime.now(timezone.utc) - timedelta(days=365)
         now = datetime.now(timezone.utc)
@@ -2606,6 +2628,8 @@ async def check_smuggle_cooldown(user_id: int) -> Tuple[bool, int]:
         row = await conn.fetchrow("SELECT cooldown_until FROM smuggle_cooldowns WHERE user_id=$1", user_id)
         if row and row['cooldown_until']:
             cooldown_until = row['cooldown_until']
+            if cooldown_until.tzinfo is None:
+                cooldown_until = cooldown_until.replace(tzinfo=timezone.utc)
             remaining = (cooldown_until - datetime.now(timezone.utc)).total_seconds()
             if remaining > 0:
                 return False, int(remaining)
@@ -2953,8 +2977,8 @@ async def verify_reset_key(key: str, user_id: int) -> bool:
     return False
 
 @db_retry()
-async def reset_user_stats(user_id: int):
-    async with db_pool.acquire() as conn:
+async def reset_user_stats(user_id: int, conn=None):
+    async def _reset(conn):
         await conn.execute("""
             UPDATE users SET
                 reputation = 0,
@@ -3000,6 +3024,13 @@ async def reset_user_stats(user_id: int):
         await conn.execute("DELETE FROM user_tasks WHERE user_id = $1", user_id)
         await conn.execute("UPDATE bitcoin_orders SET status='cancelled' WHERE user_id=$1 AND status='active'", user_id)
         await conn.execute("DELETE FROM global_cooldowns WHERE user_id=$1", user_id)
+
+    if conn:
+        await _reset(conn)
+    else:
+        async with db_pool.acquire() as new_conn:
+            async with new_conn.transaction():
+                await _reset(new_conn)
 
 # ==================== НОВЫЕ ФУНКЦИИ ДЛЯ ЗАДАНИЙ ====================
 @db_retry()
@@ -3050,7 +3081,7 @@ async def complete_task(user_id: int, task_id: int):
             if float(task['reward_coins']) > 0:
                 await update_user_balance(user_id, float(task['reward_coins']), conn=conn, allow_negative=False)
             if task['reward_reputation'] > 0:
-                await update_user_reputation(user_id, task['reward_reputation'])
+                await update_user_reputation(user_id, task['reward_reputation'], conn=conn)
 
             await conn.execute(
                 "INSERT INTO user_tasks (user_id, task_id, completed_at) VALUES ($1, $2, $3)",
@@ -3168,6 +3199,7 @@ async def get_user_username(user_id: int, conn=None) -> str:
 dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
 dp.message.middleware(GlobalCooldownMiddleware())
 
+# ==================== КОНЕЦ ЧАСТИ 1.2 ====================
 # ==================== КОНЕЦ ЧАСТИ 1.2 ====================
 # ==================== ЧАСТЬ 2: СОСТОЯНИЯ FSM И КЛАВИАТУРЫ ====================
 
