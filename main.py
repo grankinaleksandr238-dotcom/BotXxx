@@ -11266,6 +11266,7 @@ async def cancel_action_callback(callback: CallbackQuery, state: FSMContext):
 
 # ==================== КОНЕЦ ЧАСТИ 5.2 ====================
 # ==================== ЧАСТЬ 6: ФОНОВЫЕ ЗАДАЧИ И ЗАПУСК (ФИНАЛЬНАЯ ВЕРСИЯ) ====================
+# ==================== ЧАСТЬ 6: ФОНОВЫЕ ЗАДАЧИ И ЗАПУСК (ФИНАЛЬНАЯ ВЕРСИЯ) ====================
 
 import asyncio
 import logging
@@ -11335,12 +11336,17 @@ async def process_smuggle_runs():
             await asyncio.sleep(30)
             now = datetime.now(timezone.utc)
             async with db_pool.acquire() as conn:
-                runs = await conn.fetch("""
+                rows = await conn.fetch("""
                     SELECT * FROM smuggle_runs
                     WHERE status = 'in_progress' AND end_time <= $1 AND notified = FALSE
                 """, now)
 
-                for run in runs:
+                for row in rows:
+                    # Преобразуем Record в dict и приводим даты к aware
+                    run = dict(row)
+                    run['start_time'] = ensure_aware(run['start_time'])
+                    run['end_time'] = ensure_aware(run['end_time'])
+
                     run_id = run['id']
                     user_id = run['user_id']
                     chat_id = run['chat_id']
@@ -11453,14 +11459,18 @@ async def process_jail_sentences():
                 """, now)
 
                 for row in rows:
-                    sentence_id = row['id']
-                    user_id = row['user_id']
-                    chat_id = row['chat_id']
+                    sentence = dict(row)
+                    sentence['start_time'] = ensure_aware(sentence['start_time'])
+                    sentence['end_time'] = ensure_aware(sentence['end_time'])
+
+                    sentence_id = sentence['id']
+                    user_id = sentence['user_id']
+                    chat_id = sentence['chat_id']
                     success_chance = await get_setting_int("jail_success_chance")
                     auth_min = await get_setting_int("jail_auth_min")
                     auth_max = await get_setting_int("jail_auth_max")
-                    cell = row['cell_number']
-                    article = row['article_number']
+                    cell = sentence['cell_number']
+                    article = sentence['article_number']
 
                     success = random.randint(1, 100) <= success_chance
                     auth_gain = 0
@@ -11518,7 +11528,9 @@ async def process_giveaways():
                 """, now)
 
                 for gw in time_giveaways:
-                    await complete_giveaway_by_id(conn, gw['id'])
+                    gw_dict = dict(gw)
+                    gw_dict['end_date'] = ensure_aware(gw_dict['end_date'])
+                    await complete_giveaway_by_id(conn, gw_dict['id'])
 
                 participants_giveaways = await conn.fetch("""
                     SELECT g.*, COUNT(p.user_id) as participants_count
@@ -11530,7 +11542,10 @@ async def process_giveaways():
                 """)
 
                 for gw in participants_giveaways:
-                    await complete_giveaway_by_id(conn, gw['id'])
+                    gw_dict = dict(gw)
+                    if gw_dict['end_date']:
+                        gw_dict['end_date'] = ensure_aware(gw_dict['end_date'])
+                    await complete_giveaway_by_id(conn, gw_dict['id'])
 
         except Exception as e:
             logging.error(f"Ошибка в process_giveaways: {e}")
