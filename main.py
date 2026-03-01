@@ -6910,7 +6910,6 @@ async def activate_chat_command(message: Message):
 # ==================== ОБРАБОТЧИК КЛЮЧЕВЫХ СЛОВ НАЛЁТОВ ====================
 @dp.message(F.chat.type.in_({'group', 'supergroup'}), F.text & ~F.text.startswith('/'))
 async def heist_keyword_handler(message: Message):
-    """Обрабатывает ключевые слова налётов в чатах. При вводе кодового слова добавляет участника."""
     if not await check_chat(message):
         return
     user_id = message.from_user.id
@@ -6929,75 +6928,77 @@ async def heist_keyword_handler(message: Message):
     text = message.text.strip().upper()
     chat_id = message.chat.id
 
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            heist = await conn.fetchrow(
-                "SELECT * FROM heists WHERE chat_id=$1 AND status='joining' AND join_until > NOW()",
-                chat_id
-            )
-            if not heist:
-                return
-
-            if text != heist['keyword']:
-                return
-
-            if await can_delete_message(message.chat.id, message):
-                await message.delete()
-
-            exists = await conn.fetchval(
-                "SELECT 1 FROM heist_participants WHERE heist_id=$1 AND user_id=$2",
-                heist['id'], user_id
-            )
-            if exists:
-                await auto_delete_reply(message, "Ты уже в деле! Жди начала распила.")
-                return
-
-            # Проверка максимального количества участников
-            max_participants = await get_setting_int("heist_max_participants")
-            if max_participants > 0:
-                current_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist['id'])
-                if current_count >= max_participants:
-                    await auto_delete_reply(message, "❌ В налёте уже максимальное количество участников.")
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                heist = await conn.fetchrow(
+                    "SELECT * FROM heists WHERE chat_id=$1 AND status='joining' AND join_until > NOW()",
+                    chat_id
+                )
+                if not heist:
                     return
 
-            participant_cooldown = await get_setting_int("heist_participant_cooldown_hours") * 3600
-            ok, remaining = await check_global_cooldown(user_id, "heist_participate", participant_cooldown)
-            if not ok:
-                await auto_delete_reply(message, f"⏳ Ты ещё не остыл после прошлого налёта. Подожди {format_time_remaining(remaining)}.")
-                return
+                if text != heist['keyword']:
+                    return
 
-            # Используем настройки для доли
-            share_min = await get_setting_int("heist_share_min")
-            share_max = await get_setting_int("heist_share_max")
-            share = random.randint(share_min, share_max)
+                if await can_delete_message(message.chat.id, message):
+                    await message.delete()
 
-            success, new_balance, _ = await update_user_balance(user_id, share, conn=conn, allow_negative=False)
-            if not success:
-                await auto_delete_reply(message, "❌ Ошибка при начислении доли.")
-                return
+                # Проверка максимального количества участников
+                max_participants = await get_setting_int("heist_max_participants")
+                if max_participants > 0:
+                    current_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist['id'])
+                    if current_count >= max_participants:
+                        await auto_delete_reply(message, "❌ В налёте уже максимальное количество участников.")
+                        return
 
-            new_total = float(heist['total_pot']) + share
-            new_remaining = float(heist['remaining_pot']) + share
-            await conn.execute(
-                "UPDATE heists SET total_pot=$1, remaining_pot=$2 WHERE id=$3",
-                new_total, new_remaining, heist['id']
-            )
-            await conn.execute(
-                "INSERT INTO heist_participants (heist_id, user_id, base_share, current_share, defense_bonus, joined_at) "
-                "VALUES ($1, $2, $3, $3, 0, $4)",
-                heist['id'], user_id, share, datetime.now()
-            )
+                # Проверка кулдауна участия
+                participant_cooldown = await get_setting_int("heist_participant_cooldown_hours") * 3600
+                ok, remaining = await check_global_cooldown(user_id, "heist_participate", participant_cooldown)
+                if not ok:
+                    await auto_delete_reply(message, f"⏳ Ты ещё не остыл после прошлого налёта. Подожди {format_time_remaining(remaining)}.")
+                    return
 
-            await set_global_cooldown(user_id, "heist_participate", participant_cooldown)
-            # Устанавливаем глобальный кулдаун чата
-            await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+                share_min = await get_setting_int("heist_share_min")
+                share_max = await get_setting_int("heist_share_max")
+                share = random.randint(share_min, share_max)
 
-            user_info = await conn.fetchrow("SELECT first_name FROM users WHERE user_id=$1", user_id)
-            name = user_info['first_name'] if user_info else f"ID{user_id}"
-            config = HEIST_TYPES[heist['event_type']]
-            phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]),
-                                      name=name)
-            await auto_delete_reply(message, phrase)
+                success, new_balance, _ = await update_user_balance(user_id, share, conn=conn, allow_negative=False)
+                if not success:
+                    await auto_delete_reply(message, "❌ Ошибка при начислении доли.")
+                    return
+
+                new_total = float(heist['total_pot']) + share
+                new_remaining = float(heist['remaining_pot']) + share
+                await conn.execute(
+                    "UPDATE heists SET total_pot=$1, remaining_pot=$2 WHERE id=$3",
+                    new_total, new_remaining, heist['id']
+                )
+
+                # Вставка с защитой от дубликатов
+                result = await conn.execute("""
+                    INSERT INTO heist_participants (heist_id, user_id, base_share, current_share, defense_bonus, joined_at)
+                    VALUES ($1, $2, $3, $3, 0, $4)
+                    ON CONFLICT (heist_id, user_id) DO NOTHING
+                """, heist['id'], user_id, share, datetime.now())
+
+                if result == "INSERT 0 0":
+                    # Конфликт – пользователь уже участвует (должно было отсеяться выше, но на всякий случай)
+                    await auto_delete_reply(message, "Ты уже в деле! Жди начала распила.")
+                    return
+
+                await set_global_cooldown(user_id, "heist_participate", participant_cooldown)
+                await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+
+                user_info = await conn.fetchrow("SELECT first_name FROM users WHERE user_id=$1", user_id)
+                name = user_info['first_name'] if user_info else f"ID{user_id}"
+                config = HEIST_TYPES[heist['event_type']]
+                phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]), name=name)
+                await auto_delete_reply(message, phrase)
+
+    except Exception as e:
+        logging.error(f"Ошибка в heist_keyword_handler для пользователя {user_id}: {e}", exc_info=True)
+        await auto_delete_reply(message, "❌ Произошла внутренняя ошибка. Попробуйте позже.")
 
 # ==================== КОМАНДА /mlb_heist (СТАТУС НАЛЁТА) ====================
 @dp.message(Command("mlb_heist"))
