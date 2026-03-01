@@ -5328,7 +5328,6 @@ async def shop_page_callback(callback: CallbackQuery):
 # ==================== ПОКУПКА ТОВАРА (ИСПРАВЛЕНО) ====================
 @dp.callback_query(F.data.startswith("buyproduct_"))
 async def buy_callback(callback: CallbackQuery):
-    await callback.answer()  # важно для обратной связи
     user_id = callback.from_user.id
     if await is_banned(user_id) and not await is_admin(user_id):
         await callback.answer("⛔ Вы заблокированы.", show_alert=True)
@@ -5371,7 +5370,6 @@ async def buy_callback(callback: CallbackQuery):
                     await conn.execute("UPDATE shop_items SET stock = stock - 1 WHERE id=$1", item_id)
 
         phrase = "✅ Куплено! Админ скоро свяжется."
-        # Вместо удаления сообщения редактируем его
         await callback.message.edit_text(
             f"✅ Ты купил {name}! {phrase}",
             reply_markup=None
@@ -5391,15 +5389,8 @@ async def buy_callback(callback: CallbackQuery):
     except Exception as e:
         logging.error(f"Purchase error: {e}")
         await callback.answer("❌ Ошибка при покупке. Попробуй позже.", show_alert=True)
-
-async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
-    admins = SUPER_ADMINS.copy()
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT user_id FROM admins")
-        admins.extend([r['user_id'] for r in rows])
-    text = f"🛍 Новая покупка!\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} баксов"
-    for admin_id in admins:
-        await safe_send_message(admin_id, text)
+            
+        
 
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message(F.text == "💰 Мои покупки")
