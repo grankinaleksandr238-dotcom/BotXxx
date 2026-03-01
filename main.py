@@ -3226,7 +3226,13 @@ async def get_user_username(user_id: int, conn=None) -> str:
 # ==================== РЕГИСТРАЦИЯ МИДЛВАРЕЙ ====================
 dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
 dp.message.middleware(GlobalCooldownMiddleware())
+# ==================== МИДЛВАРЬ ДЛЯ ЛОГИРОВАНИЯ ВСЕХ CALLBACK-ЗАПРОСОВ ====================
+class CallbackLoggingMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event: CallbackQuery, data: dict):
+        logging.info(f"📩 Middleware получил callback: {event.data}")
+        return await handler(event, data)
 
+dp.callback_query.middleware(CallbackLoggingMiddleware())
 # ==================== КОНЕЦ ЧАСТИ 1.2 ====================
 # ==================== ЧАСТЬ 2: СОСТОЯНИЯ FSM И КЛАВИАТУРЫ (исправленная) ====================
 
