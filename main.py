@@ -4160,11 +4160,11 @@ async def universal_back_handler(message: Message, state: FSMContext):
             await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
 
     elif current_state.startswith('BlockUser') or current_state.startswith('UnblockUser'):
-    await state.clear()
-    if await is_admin(user_id):
-        await admin_users_menu(message)
-    else:
-        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
+        await state.clear()
+        if await is_admin(user_id):
+            await admin_users_menu(message)
+        else:
+            await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
 
     elif current_state.startswith('AddJuniorAdmin') or current_state.startswith('RemoveJuniorAdmin') or \
          current_state.startswith('EditAdminPermissions'):
