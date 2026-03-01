@@ -11276,7 +11276,20 @@ from datetime import datetime, timedelta, timezone
 
 from aiogram import types
 
-# Все функции и переменные из частей 1-5 предполагаются доступными
+# Явно импортируем ensure_aware (предполагается, что она определена в части 1.1)
+# Если части объединяются в один файл, этот импорт не нужен, но оставим для уверенности
+try:
+    from ensure_aware import ensure_aware
+except ImportError:
+    # Если импорт не удался, определяем функцию здесь (как запасной вариант)
+    def ensure_aware(dt):
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
+# Все остальные функции и переменные из частей 1-5 предполагаются доступными
 # (bot, dp, db_pool, redis_client, вспомогательные функции, клавиатуры, состояния)
 
 # ==================== ФОНОВАЯ ЗАДАЧА: СПАВН НАЛЁТОВ ====================
@@ -11342,10 +11355,18 @@ async def process_smuggle_runs():
                 """, now)
 
                 for row in rows:
-                    # Преобразуем Record в dict и приводим даты к aware
-                    run = dict(row)
-                    run['start_time'] = ensure_aware(run['start_time'])
-                    run['end_time'] = ensure_aware(run['end_time'])
+                    # Создаём копию с безопасными датами
+                    run = {
+                        'id': row['id'],
+                        'user_id': row['user_id'],
+                        'chat_id': row['chat_id'],
+                        'start_time': ensure_aware(row['start_time']),
+                        'end_time': ensure_aware(row['end_time']),
+                        'status': row['status'],
+                        'result': row['result'],
+                        'smuggle_amount': row['smuggle_amount'],
+                        'notified': row['notified']
+                    }
 
                     run_id = run['id']
                     user_id = run['user_id']
@@ -11442,7 +11463,7 @@ async def process_smuggle_runs():
                         await safe_send_message(user_id, level_up_msg)
 
         except Exception as e:
-            logging.error(f"Ошибка в process_smuggle_runs: {e}")
+            logging.error(f"Ошибка в process_smuggle_runs: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 # ==================== ФОНОВАЯ ЗАДАЧА: ОБРАБОТКА ТЮРЕМНЫХ СРОКОВ ====================
@@ -11452,6 +11473,8 @@ async def process_jail_sentences():
         try:
             await asyncio.sleep(30)
             now = datetime.now(timezone.utc)
+            logging.debug(f"process_jail_sentences: now={now} (tz={now.tzinfo})")
+            
             async with db_pool.acquire() as conn:
                 rows = await conn.fetch("""
                     SELECT * FROM jail_sentences
@@ -11459,18 +11482,31 @@ async def process_jail_sentences():
                 """, now)
 
                 for row in rows:
-                    sentence = dict(row)
-                    sentence['start_time'] = ensure_aware(sentence['start_time'])
-                    sentence['end_time'] = ensure_aware(sentence['end_time'])
+                    # Создаём словарь с явно приведёнными датами
+                    data = {
+                        'id': row['id'],
+                        'user_id': row['user_id'],
+                        'chat_id': row['chat_id'],
+                        'start_time': ensure_aware(row['start_time']),
+                        'end_time': ensure_aware(row['end_time']),
+                        'status': row['status'],
+                        'result': row['result'],
+                        'auth_gained': row['auth_gained'],
+                        'notified': row['notified'],
+                        'cell_number': row['cell_number'],
+                        'article_number': row['article_number']
+                    }
 
-                    sentence_id = sentence['id']
-                    user_id = sentence['user_id']
-                    chat_id = sentence['chat_id']
+                    logging.debug(f"process_jail_sentences: end_time after ensure_aware: {data['end_time']} (tz={data['end_time'].tzinfo})")
+
+                    sentence_id = data['id']
+                    user_id = data['user_id']
+                    chat_id = data['chat_id']
                     success_chance = await get_setting_int("jail_success_chance")
                     auth_min = await get_setting_int("jail_auth_min")
                     auth_max = await get_setting_int("jail_auth_max")
-                    cell = sentence['cell_number']
-                    article = sentence['article_number']
+                    cell = data['cell_number']
+                    article = data['article_number']
 
                     success = random.randint(1, 100) <= success_chance
                     auth_gain = 0
@@ -11511,7 +11547,7 @@ async def process_jail_sentences():
                         await safe_send_message(user_id, level_up_msg)
 
         except Exception as e:
-            logging.error(f"Ошибка в process_jail_sentences: {e}")
+            logging.error(f"Ошибка в process_jail_sentences: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 # ==================== ФОНОВАЯ ЗАДАЧА: ЗАВЕРШЕНИЕ РОЗЫГРЫШЕЙ ====================
@@ -11528,8 +11564,22 @@ async def process_giveaways():
                 """, now)
 
                 for gw in time_giveaways:
-                    gw_dict = dict(gw)
-                    gw_dict['end_date'] = ensure_aware(gw_dict['end_date'])
+                    # Приводим end_date к aware, даже если оно None (но в этом запросе оно точно не None)
+                    gw_dict = {
+                        'id': gw['id'],
+                        'prize': gw['prize'],
+                        'description': gw['description'],
+                        'end_date': ensure_aware(gw['end_date']),
+                        'media_file_id': gw['media_file_id'],
+                        'media_type': gw['media_type'],
+                        'status': gw['status'],
+                        'winner_id': gw['winner_id'],
+                        'winners_count': gw['winners_count'],
+                        'winners_list': gw['winners_list'],
+                        'notified': gw['notified'],
+                        'min_participants': gw['min_participants'],
+                        'condition_type': gw['condition_type']
+                    }
                     await complete_giveaway_by_id(conn, gw_dict['id'])
 
                 participants_giveaways = await conn.fetch("""
@@ -11542,13 +11592,25 @@ async def process_giveaways():
                 """)
 
                 for gw in participants_giveaways:
-                    gw_dict = dict(gw)
-                    if gw_dict['end_date']:
-                        gw_dict['end_date'] = ensure_aware(gw_dict['end_date'])
+                    gw_dict = {
+                        'id': gw['id'],
+                        'prize': gw['prize'],
+                        'description': gw['description'],
+                        'end_date': ensure_aware(gw['end_date']) if gw['end_date'] else None,
+                        'media_file_id': gw['media_file_id'],
+                        'media_type': gw['media_type'],
+                        'status': gw['status'],
+                        'winner_id': gw['winner_id'],
+                        'winners_count': gw['winners_count'],
+                        'winners_list': gw['winners_list'],
+                        'notified': gw['notified'],
+                        'min_participants': gw['min_participants'],
+                        'condition_type': gw['condition_type']
+                    }
                     await complete_giveaway_by_id(conn, gw_dict['id'])
 
         except Exception as e:
-            logging.error(f"Ошибка в process_giveaways: {e}")
+            logging.error(f"Ошибка в process_giveaways: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 async def complete_giveaway_by_id(conn, giveaway_id: int):
@@ -11575,7 +11637,7 @@ async def complete_giveaway_by_id(conn, giveaway_id: int):
             else:
                 await safe_send_message(uid, f"😢 К сожалению, вы не выиграли в розыгрыше #{giveaway_id}.")
     except Exception as e:
-        logging.error(f"Ошибка в complete_giveaway_by_id для giveaway {giveaway_id}: {e}")
+        logging.error(f"Ошибка в complete_giveaway_by_id для giveaway {giveaway_id}: {e}", exc_info=True)
 
 # ==================== ФОНОВАЯ ЗАДАЧА: ПЕРИОДИЧЕСКАЯ ОЧИСТКА ====================
 async def periodic_cleanup():
@@ -11585,7 +11647,7 @@ async def periodic_cleanup():
             await asyncio.sleep(86400)  # 24 часа
             await perform_cleanup(manual=False)
         except Exception as e:
-            logging.error(f"Ошибка в periodic_cleanup: {e}")
+            logging.error(f"Ошибка в periodic_cleanup: {e}", exc_info=True)
             await asyncio.sleep(3600)
 
 # ==================== ФОНОВАЯ ЗАДАЧА: СПИСАНИЕ ПРОСРОЧЕННЫХ БИЗНЕСОВ ====================
@@ -11616,7 +11678,7 @@ async def business_expiration_checker():
             finally:
                 await release_lock("business_expiration")
         except Exception as e:
-            logging.error(f"Ошибка в business_expiration_checker: {e}")
+            logging.error(f"Ошибка в business_expiration_checker: {e}", exc_info=True)
             await asyncio.sleep(60)
 
 # ==================== ЗАПУСК БОТА ====================
