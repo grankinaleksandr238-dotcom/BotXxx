@@ -3236,103 +3236,118 @@ from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
 from typing import List, Dict, Tuple, Optional
 
 # ==================== ПЕРЕМЕЩЁННЫЙ ХЕНДЛЕР ПОКУПКИ (ИСПРАВЛЕННЫЙ) ====================
-
 @dp.callback_query(F.data.startswith("buyproduct_"))
 async def buy_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
-    # Проверка на бан
-    if await is_banned(user_id) and not await is_admin(user_id):
-        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
-        return
-
-    # Проверка на существование пользователя
-    await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
-
-    # Проверка подписки
-    ok, not_subscribed = await check_subscription(user_id)
-    if not ok:
-        await callback.message.edit_text(
-            "❗️ Сначала подпишись на каналы.",
-            reply_markup=subscription_inline(not_subscribed)
-        )
-        await callback.answer()
-        return
-
+    # Глобальный try/except для отлова всех неожиданных ошибок
     try:
-        item_id = int(callback.data.split("_")[1])
-    except (IndexError, ValueError):
-        await callback.answer("❌ Ошибка формата данных", show_alert=True)
-        return
-
-    async with db_pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "SELECT name, price, stock FROM shop_items WHERE id=$1",
-            item_id
-        )
-        if not row:
-            await callback.answer("❌ Товар не найден", show_alert=True)
+        # Проверка на бан
+        if await is_banned(user_id) and not await is_admin(user_id):
+            await callback.answer("⛔ Вы заблокированы.", show_alert=True)
             return
 
-        name, price, stock = row['name'], float(row['price']), row['stock']
-        if stock != -1 and stock <= 0:
-            await callback.answer("❌ Товара нет в наличии!", show_alert=True)
-            return
+        # Проверка на существование пользователя
+        await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
 
-        balance = await get_user_balance(user_id)
-        if balance < price:
-            await callback.answer(
-                f"❌ Не хватает баксов! Нужно {price:.2f}, у тебя {balance:.2f}",
-                show_alert=True
+        # Проверка подписки
+        ok, not_subscribed = await check_subscription(user_id)
+        if not ok:
+            await callback.message.edit_text(
+                "❗️ Сначала подпишись на каналы.",
+                reply_markup=subscription_inline(not_subscribed)
             )
+            await callback.answer()
             return
 
-        async with conn.transaction():
-            success, new_balance, _ = await update_user_balance(
-                user_id, -price, conn=conn, allow_negative=False
+        try:
+            item_id = int(callback.data.split("_")[1])
+        except (IndexError, ValueError):
+            await callback.answer("❌ Ошибка формата данных", show_alert=True)
+            return
+
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT name, price, stock FROM shop_items WHERE id=$1",
+                item_id
             )
-            if not success:
-                await callback.answer("❌ Ошибка при списании средств.", show_alert=True)
+            if not row:
+                await callback.answer("❌ Товар не найден", show_alert=True)
                 return
 
-            await update_user_total_spent(user_id, price)
-            await conn.execute(
-                "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
-                user_id, item_id, datetime.now(timezone.utc)
-            )
-            if stock != -1:
-                await conn.execute(
-                    "UPDATE shop_items SET stock = stock - 1 WHERE id=$1",
-                    item_id
+            name, price, stock = row['name'], float(row['price']), row['stock']
+            if stock != -1 and stock <= 0:
+                await callback.answer("❌ Товара нет в наличии!", show_alert=True)
+                return
+
+            balance = await get_user_balance(user_id)
+            if balance < price:
+                await callback.answer(
+                    f"❌ Не хватает баксов! Нужно {price:.2f}, у тебя {balance:.2f}",
+                    show_alert=True
                 )
+                return
 
-    # Уведомление админов (фоново)
-    asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
+            async with conn.transaction():
+                # Блокируем строку пользователя для избежания гонок
+                await conn.execute("SELECT 1 FROM users WHERE user_id=$1 FOR UPDATE", user_id)
+                
+                success, new_balance, _ = await update_user_balance(
+                    user_id, -price, conn=conn, allow_negative=False
+                )
+                if not success:
+                    await callback.answer("❌ Ошибка при списании средств.", show_alert=True)
+                    return
 
-    # Удаляем сообщение с кнопками
-    chat_id = callback.message.chat.id
-    try:
-        await callback.message.delete()
+                await update_user_total_spent(user_id, price)
+                await conn.execute(
+                    "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
+                    user_id, item_id, datetime.now(timezone.utc)
+                )
+                if stock != -1:
+                    await conn.execute(
+                        "UPDATE shop_items SET stock = stock - 1 WHERE id=$1",
+                        item_id
+                    )
+
+        # Уведомление админов (фоново)
+        asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
+
+        # Удаляем сообщение с кнопками
+        chat_id = callback.message.chat.id
+        try:
+            await callback.message.delete()
+        except Exception as e:
+            logging.warning(f"Не удалось удалить сообщение при покупке: {e}")
+
+        # Отправляем новое сообщение
+        phrase = "✅ Куплено! Админ скоро свяжется."
+        await bot.send_message(
+            chat_id,
+            f"✅ Ты купил {name}! {phrase}",
+            reply_markup=main_menu_keyboard(await is_admin(user_id))
+        )
+
+        # Уведомление в другие чаты о крупной покупке
+        if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
+            user = callback.from_user
+            chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
+            await notify_chats(chat_phrase)
+
+        # Отправка личного сообщения с медиа
+        await send_with_media(user_id, f"✅ Покупка совершена! {phrase}", media_key='purchase')
+
+        await callback.answer()  # один раз в конце
+
     except Exception as e:
-        logging.warning(f"Не удалось удалить сообщение при покупке: {e}")
+        # Логируем неожиданную ошибку
+        logging.exception(f"Необработанная ошибка в buy_callback для user {user_id}: {e}")
+        try:
+            await callback.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.", show_alert=True)
+        except:
+            pass
 
-    # Отправляем новое сообщение
-    phrase = "✅ Куплено! Админ скоро свяжется."
-    await bot.send_message(
-        chat_id,
-        f"✅ Ты купил {name}! {phrase}",
-        reply_markup=main_menu_keyboard(await is_admin(user_id))
-    )
 
-    # Уведомление в другие чаты о крупной покупке
-    if await get_setting("chat_notify_big_purchase") == "1" and price >= BIG_PURCHASE_THRESHOLD:
-        user = callback.from_user
-        chat_phrase = f"🛒 {user.first_name} купил {name} за {price:.2f} баксов!"
-        await notify_chats(chat_phrase)
-
-    # Отправка личного сообщения с медиа
-    await send_with_media(user_id, f"✅ Покупка совершена! {phrase}", media_key='purchase')
-
-    await callback.answer()  # один раз в конце
+    
 
 # ==================== СОСТОЯНИЯ FSM ====================
 
