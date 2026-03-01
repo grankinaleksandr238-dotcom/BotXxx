@@ -4160,11 +4160,11 @@ async def universal_back_handler(message: Message, state: FSMContext):
             await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
 
     elif current_state.startswith('BlockUser') or current_state.startswith('UnblockUser'):
-        await state.clear()
-        if await is_admin(user_id):
-            await admin_ban_menu(message)
-        else:
-            await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
+    await state.clear()
+    if await is_admin(user_id):
+        await admin_users_menu(message)
+    else:
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
 
     elif current_state.startswith('AddJuniorAdmin') or current_state.startswith('RemoveJuniorAdmin') or \
          current_state.startswith('EditAdminPermissions'):
@@ -5572,6 +5572,17 @@ async def shop_page_callback(callback: CallbackQuery):
     page = int(callback.data.split("_")[2])
     await shop_handler(callback.message)
 
+# ==================== УВЕДОМЛЕНИЕ АДМИНОВ О ПОКУПКЕ ====================
+async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
+    """Отправляет уведомление о новой покупке всем администраторам."""
+    admins = SUPER_ADMINS.copy()
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT user_id FROM admins")
+        admins.extend([r['user_id'] for r in rows])
+    text = f"🛍 Новая покупка!\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} баксов"
+    for admin_id in admins:
+        await safe_send_message(admin_id, text)
+        
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message(F.text == "💰 Мои покупки")
 async def my_purchases(message: Message):
