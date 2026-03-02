@@ -5071,10 +5071,12 @@ async def process_purchase_id(message: Message, state: FSMContext):
         return
     user_id = message.from_user.id
     try:
+        logging.info(f"Покупка: пользователь {user_id}, товар ID {item_id}")
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                # Блокируем строку товара для избежания race condition
+                logging.info("Шаг 1: транзакция начата")
                 row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1 FOR UPDATE", item_id)
+                logging.info(f"Шаг 2: результат запроса товара: {row}")
                 if not row:
                     await message.answer("❌ Товар с таким ID не найден.")
                     return
@@ -5083,20 +5085,25 @@ async def process_purchase_id(message: Message, state: FSMContext):
                     await message.answer("❌ Товара нет в наличии!")
                     return
                 balance = await get_user_balance(user_id)
+                logging.info(f"Шаг 3: баланс пользователя {balance}, цена {price}")
                 if balance < price:
                     await message.answer(f"❌ Не хватает MLB! Нужно {price:.2f}, у тебя {balance:.2f}")
                     return
                 success, new_balance, _ = await update_user_balance(user_id, -price, conn=conn, allow_negative=False)
+                logging.info(f"Шаг 4: списание средств, success={success}, new_balance={new_balance}")
                 if not success:
                     await message.answer("❌ Ошибка при списании средств.")
                     return
                 await update_user_total_spent(user_id, price)
+                logging.info("Шаг 5: total_spent обновлён")
                 await conn.execute(
                     "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
                     user_id, item_id, datetime.now()
                 )
+                logging.info("Шаг 6: запись в purchases добавлена")
                 if stock != -1:
                     await conn.execute("UPDATE shop_items SET stock = stock - 1 WHERE id=$1", item_id)
+                    logging.info("Шаг 7: склад обновлён")
         await message.answer(f"✅ Ты купил {name}! Ожидай подтверждения.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
         asyncio.create_task(notify_admins_about_purchase(message.from_user, name, price))
     except Exception as e:
@@ -5104,15 +5111,6 @@ async def process_purchase_id(message: Message, state: FSMContext):
         await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
     finally:
         await state.clear()
-
-async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
-    admins = SUPER_ADMINS.copy()
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT user_id FROM admins")
-        admins.extend([r['user_id'] for r in rows])
-    text = f"🛍 Новая покупка!\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} MLB"
-    for admin_id in admins:
-        await safe_send_message(admin_id, text)
 
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message(F.text == "💰 Мои покупки")
