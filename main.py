@@ -2024,9 +2024,12 @@ async def get_user_exp(user_id: int) -> int:
     return (await get_user_stats(user_id))['exp']
 
 @db_retry()
-async def update_user_total_spent(user_id: int, amount: float):
-    async with db_pool.acquire() as conn:
+async def update_user_total_spent(user_id: int, amount: float, conn=None):
+    if conn:
         await conn.execute("UPDATE users SET total_spent = total_spent + $1 WHERE user_id=$2", amount, user_id)
+    else:
+        async with db_pool.acquire() as new_conn:
+            await new_conn.execute("UPDATE users SET total_spent = total_spent + $1 WHERE user_id=$2", amount, user_id)
 
 @db_retry()
 async def get_random_user(exclude_id: int):
@@ -5094,7 +5097,7 @@ async def process_purchase_id(message: Message, state: FSMContext):
                 if not success:
                     await message.answer("❌ Ошибка при списании средств.")
                     return
-                await update_user_total_spent(user_id, price)
+                await update_user_total_spent(user_id, price, conn=conn)
                 logging.info("Шаг 5: total_spent обновлён")
                 await conn.execute(
                     "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
