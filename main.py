@@ -5115,6 +5115,25 @@ async def process_purchase_id(message: Message, state: FSMContext):
     finally:
         await state.clear()
 
+# ==================== УВЕДОМЛЕНИЕ АДМИНОВ О ПОКУПКЕ ====================
+async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
+    logging.info(f"Уведомление админов о покупке: пользователь {user.id}, товар {item_name}, цена {price}")
+    admins = SUPER_ADMINS.copy()
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT user_id FROM admins")
+            admins.extend([r['user_id'] for r in rows])
+    except Exception as e:
+        logging.exception("Ошибка при получении списка админов")
+        return
+    text = f"🛍 Новая покупка!\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} MLB"
+    for admin_id in admins:
+        try:
+            await safe_send_message(admin_id, text)
+            logging.info(f"Уведомление отправлено админу {admin_id}")
+        except Exception as e:
+            logging.exception(f"Ошибка при отправке уведомления админу {admin_id}")
+
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message(F.text == "💰 Мои покупки")
 async def my_purchases(message: Message):
