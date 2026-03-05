@@ -7417,17 +7417,24 @@ async def admin_list_warnings(message: Message, state: FSMContext):
     # Создадим новый хендлер:
     await state.set_state("list_warnings:user_id")  # кастомное состояние
 
-@dp.message(lambda message: await state.get_state() == "list_warnings:user_id", F.text)
+@dp.message(F.text)
 async def admin_list_warnings_result(message: Message, state: FSMContext):
+    # Проверяем, что текущее состояние — именно "list_warnings:user_id"
+    current_state = await state.get_state()
+    if current_state != "list_warnings:user_id":
+        return
+
     if message.text == "◀️ Назад":
         await state.clear()
         await admin_users_menu(message)
         return
+
     user_data = await find_user_by_input(message.text)
     if not user_data:
         await message.answer("❌ Пользователь не найден.")
         await state.clear()
         return
+
     uid = user_data['user_id']
     warnings = await get_user_warnings(uid, 0)  # глобальные
     if not warnings:
@@ -7438,6 +7445,7 @@ async def admin_list_warnings_result(message: Message, state: FSMContext):
             date_str = w['warned_at'].strftime("%d.%m.%Y %H:%M")
             reason = w['reason'] or "без причины"
             text += f"• {date_str}: {reason} (админ {w['warned_by']})\n"
+
     await message.answer(text)
     await state.clear()
 
