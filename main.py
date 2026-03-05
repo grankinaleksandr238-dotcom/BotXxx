@@ -9179,16 +9179,29 @@ async def back_to_business_list(message: Message, state: FSMContext):
     await my_businesses_handler(message)
 
 # ==================== КОНЕЦ ЧАСТИ 7 ====================
-# ==================== ЧАСТЬ 8: АДМИНИСТРАТИВНАЯ ПАНЕЛЬ – ПОЛНАЯ ====================
-# УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ, МАГАЗИНОМ, КАНАЛАМИ, ПРОМОКОДАМИ, ЧАТАМИ, ПРЕДУПРЕЖДЕНИЯМИ,
-# АДМИНИСТРАТОРАМИ, СТАТИСТИКА, РАССЫЛКА, НАСТРОЙКИ, ОЧИСТКА
+# ==================== ЧАСТЬ 8: АДМИНИСТРАТИВНАЯ ПАНЕЛЬ (ПОЛНАЯ, ИСПРАВЛЕННАЯ) ====================
+# Управление пользователями, магазином, каналами, промокодами, чатами, предупреждениями,
+# администраторами, статистика, рассылка, настройки, очистка
 
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ ====================
+import asyncio
+import logging
+import json
+import csv
+import io
+from datetime import datetime, timedelta
+from typing import List, Dict, Tuple, Optional
+
+from aiogram import F, types
+from aiogram.filters import StateFilter
+from aiogram.fsm.context import FSMContext
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 async def check_admin_permissions(user_id: int, permission: str) -> bool:
     return await has_permission(user_id, permission)
 
 def safe_split_text(text: str, limit: int = 4000) -> list:
-    """Разбивает длинный текст на части, не разрывая строки."""
     lines = text.split('\n')
     parts = []
     current = ""
@@ -9204,6 +9217,147 @@ def safe_split_text(text: str, limit: int = 4000) -> list:
     if current:
         parts.append(current)
     return parts
+
+# ==================== КАТЕГОРИИ НАСТРОЕК ====================
+SETTINGS_CATEGORIES = {
+    "⚙️ Казино": [
+        ("casino_win_chance", "🎰 Общий шанс выигрыша (%)"),
+        ("casino_min_bet", "💰 Мин. ставка (MLB)"),
+        ("casino_max_bet", "💰 Макс. ставка (MLB)"),
+        ("min_level_casino", "🔒 Мин. уровень для казино"),
+        ("slots_win_probability", "🍒 Шанс выигрыша в слотах (%)"),
+        ("slots_multiplier_three", "🍒 Множитель 3 символа"),
+        ("slots_multiplier_diamond", "💎 Множитель бриллианты"),
+        ("slots_multiplier_seven", "7️⃣ Множитель семерки"),
+        ("roulette_win_chance", "🎡 Шанс выигрыша в рулетке (%)"),
+        ("roulette_number_multiplier", "🎡 Множитель на число"),
+        ("roulette_green_multiplier", "🎡 Множитель на зелёное"),
+        ("roulette_color_multiplier", "🎡 Множитель на цвет"),
+    ],
+    "⚙️ Кража": [
+        ("random_attack_cost", "💰 Стоимость случайной кражи (MLB)"),
+        ("targeted_attack_cost", "🎯 Стоимость целевой кражи (MLB)"),
+        ("theft_cooldown_minutes", "⏳ Кулдаун кражи (минуты)"),
+        ("theft_success_chance", "✅ Шанс успеха кражи (%)"),
+        ("theft_defense_chance", "🛡 Шанс защиты жертвы (%)"),
+        ("theft_defense_penalty", "💸 Штраф при защите (MLB)"),
+        ("min_theft_amount", "⬇️ Мин. сумма кражи (MLB)"),
+        ("max_theft_amount", "⬆️ Макс. сумма кражи (MLB)"),
+    ],
+    "⚙️ Кидалово (PVP)": [
+        ("betray_base_chance", "🎲 Базовый шанс успеха (%)"),
+        ("betray_steal_percent", "💸 Процент кражи при успехе"),
+        ("betray_fail_penalty_percent", "💸 Штраф при провале (%)"),
+        ("betray_cooldown_minutes", "⏳ Кулдаун между кидками (минуты)"),
+        ("betray_max_chance", "📈 Макс. шанс успеха (%)"),
+    ],
+    "⚙️ Налёты": [
+        ("heist_min_interval_minutes", "⏳ Мин. интервал между налётами (минуты)"),
+        ("heist_max_interval_minutes", "⏳ Макс. интервал"),
+        ("heist_join_minutes", "⏱ Время на сбор (минуты)"),
+        ("heist_split_minutes", "⏱ Время на распил (минуты)"),
+        ("heist_min_pot", "💰 Мин. банк (MLB)"),
+        ("heist_max_pot", "💰 Макс. банк (MLB)"),
+        ("heist_btc_chance", "₿ Шанс появления BTC (%)"),
+        ("heist_min_btc", "₿ Мин. BTC"),
+        ("heist_max_btc", "₿ Макс. BTC"),
+        ("heist_cooldown_minutes", "⏳ Кулдаун между налётами в чате"),
+        ("heist_participant_cooldown_hours", "⏳ Кулдаун участника (часы)"),
+        ("heist_share_min", "🍀 Мин. доля участника (MLB)"),
+        ("heist_share_max", "🍀 Макс. доля участника (MLB)"),
+        ("heist_max_participants", "👥 Макс. участников в налёте"),
+    ],
+    "⚙️ Фарм": [
+        ("business_upgrade_cost_per_level", "📈 База стоимости улучшения (BTC)"),
+        ("business_collect_interval_minutes", "⏱ Интервал сбора (минуты)"),
+        ("business_max_storage_hours", "⏳ Макс. накопление (часы)"),
+        ("business_max_businesses", "📊 Макс. количество фармов"),
+        ("business_lifetime_hours_default", "⏳ Срок жизни фарма по умолчанию (часы)"),
+    ],
+    "⚙️ Опыт и уровни": [
+        ("exp_per_dice_win", "🎲 Опыт за победу в кости"),
+        ("exp_per_dice_lose", "🎲 Опыт за проигрыш"),
+        ("exp_per_guess_win", "🔢 Опыт за победу в угадайке"),
+        ("exp_per_guess_lose", "🔢 Опыт за проигрыш"),
+        ("exp_per_slots_win", "🍒 Опыт за победу в слотах"),
+        ("exp_per_slots_lose", "🍒 Опыт за проигрыш"),
+        ("exp_per_roulette_win", "🎡 Опыт за победу в рулетке"),
+        ("exp_per_roulette_lose", "🎡 Опыт за проигрыш"),
+        ("exp_per_theft_success", "🔫 Опыт за успешную кражу"),
+        ("exp_per_theft_fail", "🔫 Опыт за провал кражи"),
+        ("exp_per_theft_defense", "🛡 Опыт за защиту"),
+        ("exp_per_heist_participation", "💰 Опыт за участие в налёте"),
+        ("exp_per_betray_success", "🔪 Опыт за успешное кидалово"),
+        ("exp_per_betray_fail", "🔪 Опыт за неудачное кидалово"),
+        ("exp_per_smuggle", "📦 Опыт за контрабанду"),
+        ("exp_per_jail", "🏛 Опыт за тюрьму"),
+        ("level_multiplier", "📊 Множитель опыта для уровня"),
+        ("level_reward_coins", "💰 База награды за уровень (MLB)"),
+        ("level_reward_reputation", "⭐ База репутации за уровень"),
+        ("level_reward_coins_increment", "📈 Прирост MLB за уровень"),
+        ("level_reward_reputation_increment", "📈 Прирост репутации за уровень"),
+    ],
+    "⚙️ Рефералы": [
+        ("referral_bonus", "💰 Бонус за реферала (MLB)"),
+        ("referral_reputation", "⭐ Репутация за реферала"),
+        ("referral_required_thefts", "🔫 Требуется краж для активации"),
+    ],
+    "⚙️ Подгон": [
+        ("gift_amount", "🎁 Сумма подгона (MLB)"),
+        ("gift_limit_per_day", "📊 Лимит подгонов в чате в день"),
+        ("gift_global_limit_per_user", "🌐 Глобальный лимит на пользователя"),
+        ("gift_cooldown", "⏳ Кулдаун подгона (минуты)"),
+    ],
+    "⚙️ Биткоин-биржа": [
+        ("exchange_min_price", "⬇️ Мин. цена BTC (MLB)"),
+        ("exchange_max_price", "⬆️ Макс. цена BTC (MLB)"),
+        ("exchange_commission_percent", "💸 Комиссия биржи (%)"),
+        ("exchange_commission_side", "🔁 Сторона комиссии (buyer/seller/both)"),
+        ("exchange_commission_destination", "📍 Куда идёт комиссия (burn/balance)"),
+        ("exchange_min_amount_btc", "⬇️ Мин. сумма заявки (BTC)"),
+    ],
+    "⚙️ Автоудаление": [
+        ("auto_delete_commands_seconds", "⏳ Автоудаление команд (секунд)"),
+    ],
+    "⚙️ Прокачка навыков": [
+        ("skill_share_cost_per_level", "🎯 Стоимость уровня Доли (авторитет)"),
+        ("skill_luck_cost_per_level", "🍀 Стоимость уровня Удачи (авторитет)"),
+        ("skill_betray_cost_per_level", "🔪 Стоимость уровня Кидалова (авторитет)"),
+        ("skill_share_bonus_per_level", "🎯 Бонус Доли за уровень (%)"),
+        ("skill_luck_bonus_per_level", "🍀 Бонус Удачи за уровень (%)"),
+        ("skill_betray_bonus_per_level", "🔪 Бонус Кидалова за уровень (%)"),
+        ("skill_max_level", "📈 Макс. уровень навыков"),
+    ],
+    "⚙️ Контрабанда": [
+        ("smuggle_base_amount", "₿ Базовая добыча BTC"),
+        ("smuggle_cooldown_minutes", "⏳ Базовый кулдаун (минуты)"),
+        ("smuggle_fail_penalty_minutes", "💔 Штраф при провале (минуты)"),
+        ("smuggle_success_chance", "✅ Шанс успеха (%)"),
+        ("smuggle_caught_chance", "🚨 Шанс попасться (%)"),
+        ("smuggle_lost_chance", "💥 Шанс потерять груз (%)"),
+        ("smuggle_min_duration", "⏱ Мин. длительность (минуты)"),
+        ("smuggle_max_duration", "⏱ Макс. длительность (минуты)"),
+    ],
+    "⚙️ Тюрьма": [
+        ("jail_min_duration", "⏱ Мин. срок (минуты)"),
+        ("jail_max_duration", "⏱ Макс. срок (минуты)"),
+        ("jail_success_chance", "✅ Шанс получить авторитет (%)"),
+        ("jail_auth_min", "⬇️ Мин. авторитет за успех"),
+        ("jail_auth_max", "⬆️ Макс. авторитет за успех"),
+        ("jail_cooldown_hours", "⏳ Кулдаун тюрьмы (часы)"),
+        ("golden_ticket_chance", "🎫 Шанс золотого билета (%)"),
+        ("golden_ticket_gift", "🎫 Награда за золотой билет (MLB)"),
+    ],
+    "⚙️ Задания": [
+        ("task_subscribe_check_interval", "⏱ Интервал проверки подписки (сек)"),
+    ],
+    "⚙️ Промокоды": [
+        ("promocode_max_uses_default", "📊 Макс. использований по умолчанию"),
+    ],
+    "⚙️ Предупреждения": [
+        ("warnings_per_ban", "⚠️ Количество предупреждений до бана в чате"),
+    ],
+}
 
 # ==================== ГЛАВНОЕ МЕНЮ АДМИНКИ ====================
 @dp.message(F.text == "⚙️ Админка")
@@ -9976,7 +10130,6 @@ async def unblock_user_finish(message: Message, state: FSMContext):
     await state.clear()
 
 # ==================== ПРЕДУПРЕЖДЕНИЯ (АДМИНКА) ====================
-
 @dp.message(F.text == "⚠️ Выдать предупреждение")
 async def admin_warn_start(message: Message, state: FSMContext):
     if not await check_admin_permissions(message.from_user.id, "manage_users"):
@@ -10055,13 +10208,7 @@ async def admin_clear_warnings_finish(message: Message, state: FSMContext):
     await safe_send_message(uid, f"🧹 Ваши глобальные предупреждения сняты администратором.")
     await state.clear()
 
-@dp.message(F.text == "📋 Список предупреждений")
-async def admin_list_warnings(message: Message, state: FSMContext):
-    if not await check_admin_permissions(message.from_user.id, "manage_users"):
-        return
-    await message.answer("Введи ID или @username пользователя для просмотра глобальных предупреждений:", reply_markup=back_keyboard())
-    await state.set_state("list_warnings:user_id")
-
+# ==================== ИСПРАВЛЕННЫЙ ХЕНДЛЕР ДЛЯ ПРОСМОТРА ПРЕДУПРЕЖДЕНИЙ ====================
 @dp.message(F.text)
 async def admin_list_warnings_result(message: Message, state: FSMContext):
     current_state = await state.get_state()
@@ -10467,7 +10614,6 @@ async def add_channel_chat_id(message: Message, state: FSMContext):
         await admin_channel_menu(message)
         return
     chat_id = message.text.strip()
-    # Проверяем, что канал существует и бот является администратором
     try:
         chat = await bot.get_chat(chat_id)
         bot_member = await bot.get_chat_member(chat_id, bot.id)
@@ -10507,7 +10653,6 @@ async def add_channel_link(message: Message, state: FSMContext):
                 "INSERT INTO channels (chat_id, title, invite_link) VALUES ($1, $2, $3)",
                 data['chat_id'], data['title'], link
             )
-        # сбрасываем кэш каналов
         global last_channels_update
         last_channels_update = 0
         await message.answer("✅ Канал добавлен!", reply_markup=admin_channel_keyboard())
@@ -10856,19 +11001,16 @@ async def add_admin_user(message: Message, state: FSMContext):
     except:
         await message.answer("❌ Введи число (ID пользователя).")
         return
-    # Проверяем, существует ли пользователь
     user = await find_user_by_input(str(uid))
     if not user:
         await message.answer("❌ Пользователь с таким ID не найден в базе.")
         await state.clear()
         return
-    # Проверяем, не является ли уже админом
     if await is_admin(uid):
         await message.answer("❌ Этот пользователь уже является администратором.")
         await state.clear()
         return
     await state.update_data(user_id=uid, first_name=user.get('first_name', f'ID{uid}'))
-    # Выбор прав
     await message.answer(
         "Выбери права для нового администратора (можно выбрать несколько, затем нажать 'Готово'):\n"
         "Отправляй номера прав через пробел или запятую.\n\n"
@@ -10882,7 +11024,6 @@ async def add_admin_permissions(message: Message, state: FSMContext):
         await state.clear()
         await admin_admins_menu(message)
         return
-    # Парсим введённые номера
     selected = []
     for token in message.text.replace(',', ' ').split():
         try:
@@ -11185,8 +11326,6 @@ async def broadcast_media(message: Message, state: FSMContext):
     await status_msg.edit_text(f"✅ Рассылка завершена!\n📊 Отправлено: {sent}\n❌ Ошибок: {failed}\n👥 Всего: {total}")
 
 # ==================== НАСТРОЙКИ ====================
-# Категории настроек (определены в части 1a, используем глобальный словарь SETTINGS_CATEGORIES)
-
 @dp.message(F.text == "⚙️ Настройки")
 async def settings_menu(message: Message):
     if not await check_admin_permissions(message.from_user.id, "edit_settings"):
@@ -11229,7 +11368,6 @@ async def edit_setting_start(callback: CallbackQuery, state: FSMContext):
     key = callback.data[5:]
     current_value = await get_setting(key)
 
-    # Найдём категорию по ключу
     category = None
     for cat, params in SETTINGS_CATEGORIES.items():
         for k, _ in params:
@@ -11268,7 +11406,6 @@ async def edit_setting_value(message: Message, state: FSMContext):
         await message.answer("❌ Ошибка при сохранении настройки.")
 
     await state.clear()
-    # Возвращаемся к списку параметров категории
     if category:
         params = SETTINGS_CATEGORIES.get(category, [])
         text = f"<b>{category}</b>\n\n"
