@@ -4,7 +4,9 @@ import os
 import zipfile
 import csv
 import asyncpg
+from datetime import datetime
 from pathlib import Path
+import re
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if "?" in DATABASE_URL:
@@ -13,8 +15,8 @@ if "?" in DATABASE_URL:
 else:
     DATABASE_URL += "?sslmode=require"
 
-# ==================== ТАБЛИЦЫ БЕЗ ВНЕШНИХ КЛЮЧЕЙ ====================
-CREATE_TABLES = [
+# ==================== ВСЕ ТАБЛИЦЫ (32 шт.) ====================
+CREATE_TABLES_SQL = [
     """
     CREATE TABLE IF NOT EXISTS users (
         user_id BIGINT PRIMARY KEY,
@@ -332,7 +334,7 @@ CREATE_TABLES = [
         UNIQUE(user_id, chat_id, warned_at)
     )
     """,
-    # Теперь таблицы, которые ссылаются на другие
+    # Зависимые таблицы
     """
     CREATE TABLE IF NOT EXISTS bitcoin_orders (
         id SERIAL PRIMARY KEY,
@@ -405,11 +407,56 @@ CREATE_TABLES = [
     """
 ]
 
+# ==================== ФУНКЦИЯ ПРЕОБРАЗОВАНИЯ ТИПОВ ====================
+def convert_value(value: str, pg_type: str):
+    """Конвертирует строку из CSV в нужный тип PostgreSQL"""
+    if value is None or value == '':
+        return None
+    value = value.strip()
+    if not value:
+        return None
+
+    # Числовые типы
+    if 'int' in pg_type or 'bigint' in pg_type or 'smallint' in pg_type or 'serial' in pg_type:
+        try:
+            return int(value)
+        except:
+            return None
+    if 'numeric' in pg_type or 'decimal' in pg_type or 'float' in pg_type or 'double' in pg_type:
+        try:
+            return float(value)
+        except:
+            return None
+
+    # Булевы
+    if 'bool' in pg_type:
+        return value.lower() in ('true', 't', 'yes', 'y', '1')
+
+    # Дата/время
+    if 'timestamp' in pg_type:
+        # Пробуем разные форматы
+        for fmt in ('%Y-%m-%d %H:%M:%S.%f', '%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S'):
+            try:
+                return datetime.strptime(value, fmt)
+            except:
+                continue
+        # Если не получилось, возвращаем как есть (строка)
+        return value
+    if 'date' in pg_type:
+        try:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        except:
+            return value
+
+    # По умолчанию строка
+    return value
+
+# ==================== ОСНОВНАЯ ФУНКЦИЯ ====================
 async def restore_database():
     print("💣 УНИЧТОЖАЮ ВСЕ СТАРЫЕ ТАБЛИЦЫ...")
     conn = await asyncpg.connect(DATABASE_URL)
 
-    # Получаем список всех таблиц
+    # Удаляем все существующие таблицы
     tables = await conn.fetch("""
         SELECT tablename FROM pg_tables WHERE schemaname = 'public'
     """)
@@ -418,16 +465,16 @@ async def restore_database():
             await conn.execute(f'DROP TABLE IF EXISTS "{table["tablename"]}" CASCADE')
             print(f"   Удалена: {table['tablename']}")
         except Exception as e:
-            print(f"   ⚠️ Не удалось удалить {table['tablename']}: {e}")
+            print(f"   ⚠️ Ошибка удаления {table['tablename']}: {e}")
 
     print("\n🏗️ СОЗДАЮ ВСЕ ТАБЛИЦЫ...")
-    for i, create_sql in enumerate(CREATE_TABLES, 1):
+    for i, sql in enumerate(CREATE_TABLES_SQL, 1):
         try:
-            await conn.execute(create_sql)
-            print(f"   [{i}/{len(CREATE_TABLES)}] Создана")
+            await conn.execute(sql)
+            print(f"   [{i}/{len(CREATE_TABLES_SQL)}] Создана")
         except Exception as e:
-            print(f"   ❌ Ошибка при создании таблицы {i}: {e}")
-            # Можно выйти, но попробуем продолжить
+            print(f"   ❌ Ошибка создания таблицы {i}: {e}")
+            # Можно продолжить, но это рискованно
             # return
 
     print("\n📦 Распаковываю database_dump_20260306_122008.zip...")
@@ -445,6 +492,7 @@ async def restore_database():
     # Отключаем проверку внешних ключей
     await conn.execute("SET session_replication_role = 'replica';")
 
+    # Собираем все CSV файлы рекурсивно
     csv_files = []
     for root, dirs, files in os.walk("csv_restore"):
         for file in files:
@@ -454,11 +502,22 @@ async def restore_database():
     print(f"📊 Найдено CSV файлов: {len(csv_files)}")
 
     for csv_path in csv_files:
-        # Получаем имя таблицы из имени файла (без расширения)
         table_name = os.path.splitext(os.path.basename(csv_path))[0]
-        # Если файл лежит в подпапке, имя может содержать путь, но basename уже даст чистое имя
         print(f"\n📥 Загружаю {table_name} из {csv_path}...")
 
+        # Получаем информацию о колонках таблицы
+        columns_info = await conn.fetch("""
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = $1
+            ORDER BY ordinal_position
+        """, table_name)
+
+        if not columns_info:
+            print(f"   ⚠️ Таблица {table_name} не существует, пропускаю")
+            continue
+
+        # Читаем CSV
         with open(csv_path, 'r', encoding='utf-8') as f:
             reader = csv.DictReader(f)
             rows = list(reader)
@@ -467,32 +526,43 @@ async def restore_database():
             print(f"   ⏭️ Файл пуст")
             continue
 
-        # Очищаем таблицу перед вставкой (если она есть)
+        # Очищаем таблицу перед вставкой
         try:
             await conn.execute(f"TRUNCATE TABLE {table_name} RESTART IDENTITY CASCADE")
         except Exception as e:
             print(f"   ⚠️ Не удалось очистить {table_name}: {e}")
-            # Возможно, таблицы нет, пропускаем
-            continue
+            # Продолжаем, возможно таблица не существует
+
+        # Словарь соответствия типов
+        col_types = {c['column_name']: c['data_type'] for c in columns_info}
 
         success = 0
         for row in rows:
-            # Убираем пустые значения (пустые строки считаем как NULL? в CSV пустое поле - пустая строка)
-            clean_row = {k: v for k, v in row.items() if v and v.strip()}
-            if clean_row:
-                cols = list(clean_row.keys())
-                vals = list(clean_row.values())
-                placeholders = ",".join(f"${i+1}" for i in range(len(vals)))
-                try:
-                    await conn.execute(
-                        f"INSERT INTO {table_name} ({','.join(cols)}) VALUES ({placeholders})",
-                        *vals
-                    )
-                    success += 1
-                except Exception as e:
-                    print(f"   ❌ Ошибка вставки в {table_name}: {e}")
-                    # Печатаем первые 100 символов строки для диагностики
-                    print(f"      Данные: {str(clean_row)[:100]}...")
+            # Преобразуем значения согласно типам
+            clean_row = {}
+            for col, val in row.items():
+                if col in col_types and val is not None:
+                    converted = convert_value(val, col_types[col])
+                    if converted is not None:
+                        clean_row[col] = converted
+            if not clean_row:
+                continue
+
+            cols = list(clean_row.keys())
+            vals = list(clean_row.values())
+            placeholders = ",".join(f"${i+1}" for i in range(len(vals)))
+
+            try:
+                await conn.execute(
+                    f"INSERT INTO {table_name} ({','.join(cols)}) VALUES ({placeholders})",
+                    *vals
+                )
+                success += 1
+            except Exception as e:
+                print(f"   ❌ Ошибка вставки в {table_name}: {e}")
+                # Можно вывести фрагмент данных для отладки
+                # print(f"      Данные: {clean_row}")
+
         print(f"   ✅ Загружено: {success}/{len(rows)}")
 
     # Включаем проверку внешних ключей обратно
