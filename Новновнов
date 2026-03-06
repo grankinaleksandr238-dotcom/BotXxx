@@ -2306,14 +2306,11 @@ async def finish_heist_joining(heist_id: int, join_until: datetime):
             if not heist:
                 return
             await conn.execute(
-                "UPDATE heists SET status='splitting' WHERE id=$1",
-                heist_id
-            )
-            participants = await conn.fetch("SELECT user_id FROM heist_participants WHERE heist_id=$1", heist_id)
-            if not participants:
-                await conn.execute("UPDATE heists SET status='finished' WHERE id=$1", heist_id)
-                # Редактируем сообщение, чтобы показать отмену
-                if not participants:
+    "UPDATE heists SET status='splitting' WHERE id=$1",
+    heist_id
+)
+participants = await conn.fetch("SELECT user_id FROM heist_participants WHERE heist_id=$1", heist_id)
+if not participants:
     await conn.execute("UPDATE heists SET status='finished' WHERE id=$1", heist_id)
     await safe_send_chat(heist['chat_id'], "❌ Никто не присоединился к налёту. Он отменён.")
     return
@@ -3240,7 +3237,7 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
     if row1:
         builder.row(*row1)
     
-    row2 = []
+row2 = []
 if "manage_giveaways" in permissions:
     row2.append(KeyboardButton(text="🎁 Управление розыгрышами"))
 if "manage_users" in permissions:
@@ -3248,7 +3245,7 @@ if "manage_users" in permissions:
 if row2:
     builder.row(*row2)
     
-    row3 = []
+row3 = []
     if "manage_channels" in permissions:
         row3.append(KeyboardButton(text="📢 Каналы"))
     if "manage_chats" in permissions:
@@ -6485,15 +6482,15 @@ async def back_to_admin_panel(message: Message):
     )
 
 # ==================== ПОДМЕНЮ ЗАДАНИЙ ====================
-@dp.message(F.text == "📋 Задания")
+@dp.message(F.text == "📋 Управление заданиями")
 async def admin_tasks_menu(message: Message):
-    if not await check_admin_permissions(message.from_user.id, "manage_users"):  # используем manage_users для заданий
+    if not await check_admin_permissions(message.from_user.id, "manage_users"):
         await message.answer("❌ Недостаточно прав.")
         return
     await message.answer("Управление заданиями:", reply_markup=admin_tasks_submenu())
 
 # ==================== ПОДМЕНЮ РОЗЫГРЫШЕЙ ====================
-@dp.message(F.text == "🎁 Розыгрыши")
+@dp.message(F.text == "🎁 Управление розыгрышами")
 async def admin_giveaways_menu(message: Message):
     if not await check_admin_permissions(message.from_user.id, "manage_giveaways"):
         await message.answer("❌ Недостаточно прав.")
