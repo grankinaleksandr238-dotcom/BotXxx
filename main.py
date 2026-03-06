@@ -6124,6 +6124,7 @@ async def cmd_smuggle(message: Message):
         await safe_send_chat(message.chat.id, phrase)
 
 # ==================== КОМАНДА /mlb_jail (ТЮРЬМА) ====================
+# ==================== КОМАНДА /mlb_jail (ТЮРЬМА) ====================
 @dp.message(Command("mlb_jail"))
 async def cmd_jail(message: Message, state: FSMContext):
     if not await check_chat(message):
@@ -6230,7 +6231,7 @@ async def jail_article_input(message: Message, state: FSMContext):
     max_duration = await get_setting_int("jail_max_duration")
     duration = random.randint(min_duration, max_duration)
 
-    # ИСПРАВЛЕНО: добавляем вызов функции для сохранения в БД
+    # Сохраняем в БД
     try:
         await start_jail_sentence(user_id, chat_id, duration, cell, article)
     except Exception as e:
@@ -6260,7 +6261,7 @@ async def jail_article_input(message: Message, state: FSMContext):
     cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
     await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
 
-    # Отправляем сообщение в чат (или в ЛС, если чат не указан)
+    # Отправляем сообщение в чат
     if chat_id:
         try:
             await safe_send_chat(chat_id, phrase)
@@ -6273,40 +6274,7 @@ async def jail_article_input(message: Message, state: FSMContext):
     await message.answer("✅ Ты отправился в тюрьму! Ожидай результатов.")
     await state.clear()
 
-    # ИСПРАВЛЕНО: вызываем существующую функцию
-    await start_jail_sentence(user_id, chat_id, duration, cell, article)
-
-    golden_ticket_chance = await get_setting_float("golden_ticket_chance")
-    if random.random() * 100 < golden_ticket_chance:
-        gift_amount = await get_setting_float("golden_ticket_gift")
-        await update_user_balance(user_id, gift_amount, allow_negative=False)
-        if chat_id:
-            await safe_send_chat(
-                chat_id,
-                f"🎫 <b>ЗОЛОТОЙ БИЛЕТ!</b>\n"
-                f"{message.from_user.first_name} нашёл золотой билет и получает {gift_amount:.2f} MLB!"
-            )
-
-    name = message.from_user.first_name
-    phrase = get_random_phrase(JAIL_START_PHRASES, name=name, duration=duration)
-
-    cooldown_hours_jail = await get_setting_int("jail_cooldown_hours")
-    await set_global_cooldown(user_id, 'jail', cooldown_hours_jail * 3600)
-    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
-    await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
-
-    if chat_id:
-        try:
-            await safe_send_chat(chat_id, phrase)
-        except Exception as e:
-            logging.error(f"Failed to send jail start to chat {chat_id}: {e}")
-            await message.answer(phrase)
-    else:
-        await message.answer(phrase)
-
-    await message.answer("✅ Ты отправился в тюрьму! Ожидай результатов.")
-    await state.clear()
-
+# ==================== КОМАНДА /mlb_top (ТОП В ЧАТЕ) ====================
 # ==================== КОМАНДА /mlb_top (ТОП В ЧАТЕ) ====================
 @dp.message(Command("mlb_top"))
 async def cmd_chat_top(message: Message):
