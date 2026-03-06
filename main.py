@@ -6230,6 +6230,49 @@ async def jail_article_input(message: Message, state: FSMContext):
     max_duration = await get_setting_int("jail_max_duration")
     duration = random.randint(min_duration, max_duration)
 
+    # ИСПРАВЛЕНО: добавляем вызов функции для сохранения в БД
+    try:
+        await start_jail_sentence(user_id, chat_id, duration, cell, article)
+    except Exception as e:
+        logging.error(f"Error starting jail sentence for user {user_id}: {e}")
+        await message.answer("❌ Произошла ошибка при отправке в тюрьму. Попробуйте позже.")
+        await state.clear()
+        return
+
+    # Золотой билет
+    golden_ticket_chance = await get_setting_float("golden_ticket_chance")
+    if random.random() * 100 < golden_ticket_chance:
+        gift_amount = await get_setting_float("golden_ticket_gift")
+        await update_user_balance(user_id, gift_amount, allow_negative=False)
+        if chat_id:
+            await safe_send_chat(
+                chat_id,
+                f"🎫 <b>ЗОЛОТОЙ БИЛЕТ!</b>\n"
+                f"{message.from_user.first_name} нашёл золотой билет и получает {gift_amount:.2f} MLB!"
+            )
+
+    name = message.from_user.first_name
+    phrase = get_random_phrase(JAIL_START_PHRASES, name=name, duration=duration)
+
+    # Устанавливаем кулдауны
+    cooldown_hours_jail = await get_setting_int("jail_cooldown_hours")
+    await set_global_cooldown(user_id, 'jail', cooldown_hours_jail * 3600)
+    cooldown_hours = await get_setting_int("global_chat_cooldown_hours")
+    await set_global_cooldown(user_id, "chat_activity", cooldown_hours * 3600)
+
+    # Отправляем сообщение в чат (или в ЛС, если чат не указан)
+    if chat_id:
+        try:
+            await safe_send_chat(chat_id, phrase)
+        except Exception as e:
+            logging.error(f"Failed to send jail start to chat {chat_id}: {e}")
+            await message.answer(phrase)
+    else:
+        await message.answer(phrase)
+
+    await message.answer("✅ Ты отправился в тюрьму! Ожидай результатов.")
+    await state.clear()
+
     # ИСПРАВЛЕНО: вызываем существующую функцию
     await start_jail_sentence(user_id, chat_id, duration, cell, article)
 
