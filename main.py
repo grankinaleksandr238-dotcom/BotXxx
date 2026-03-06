@@ -1,10 +1,10 @@
 import asyncio
 import os
 import zipfile
-import json
+import csv
+import io
 import asyncpg
 from datetime import datetime
-from decimal import Decimal
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 if "?" in DATABASE_URL:
@@ -13,62 +13,73 @@ if "?" in DATABASE_URL:
 else:
     DATABASE_URL += "?sslmode=require"
 
-async def restore_from_zip():
+def detect_type(value):
+    """Определяет тип данных из CSV строки"""
+    if value == '' or value is None:
+        return None
+    # Пробуем int
+    try:
+        return int(value)
+    except:
+        pass
+    # Пробуем float
+    try:
+        return float(value)
+    except:
+        pass
+    # Пробуем дату
+    try:
+        if 'T' in value or ('-' in value and ':' in value):
+            return datetime.fromisoformat(value.replace('Z', '+00:00'))
+    except:
+        pass
+    # Оставляем как строку
+    return value
+
+async def restore_from_csv():
     print("📦 Распаковываю database_dump_20260306_122008.zip...")
     
-    # Распаковываем архив
     with zipfile.ZipFile("database_dump_20260306_122008.zip", "r") as zip_ref:
-        zip_ref.extractall("db_restore")
+        zip_ref.extractall("csv_restore")
     
     print("✅ Архив распакован")
-    print("🔄 Подключаюсь к базе данных...")
+    print("🔄 Подключаюсь к базе...")
     
     conn = await asyncpg.connect(DATABASE_URL)
-    
-    # Отключаем проверки внешних ключей
     await conn.execute("SET session_replication_role = 'replica';")
     
-    # Проходим по всем файлам в распакованной папке
-    files = os.listdir("db_restore")
-    json_files = [f for f in files if f.endswith('.json')]
+    # Ищем все CSV файлы
+    csv_files = [f for f in os.listdir("csv_restore") if f.endswith('.csv')]
+    print(f"📊 Найдено CSV: {len(csv_files)}")
     
-    print(f"📊 Найдено JSON файлов: {len(json_files)}")
-    
-    for json_file in json_files:
-        table_name = json_file.replace('.json', '')
-        file_path = os.path.join("db_restore", json_file)
+    for csv_file in csv_files:
+        table_name = csv_file.replace('.csv', '')
+        file_path = os.path.join("csv_restore", csv_file)
         
         print(f"📥 Загружаю {table_name}...")
         
         with open(file_path, 'r', encoding='utf-8') as f:
-            rows = json.load(f)
+            reader = csv.DictReader(f)
+            rows = list(reader)
         
         if not rows:
-            print(f"   ⏭️ Пустая таблица")
+            print(f"   ⏭️ Пустой файл")
             continue
         
         # Очищаем таблицу
         try:
             await conn.execute(f"TRUNCATE TABLE {table_name} RESTART IDENTITY CASCADE")
         except:
-            print(f"   ⚠️ Таблица {table_name} не существует, создаю...")
-            # Если таблицы нет - пропускаем (она создастся при вставке)
             pass
         
         # Вставляем данные
         success = 0
         for row in rows:
-            # Преобразуем значения
+            # Преобразуем типы
             fixed_row = {}
             for key, val in row.items():
-                if val is not None:
-                    if isinstance(val, str):
-                        try:
-                            if 'T' in val:
-                                val = datetime.fromisoformat(val.replace('Z', '+00:00'))
-                        except:
-                            pass
-                    fixed_row[key] = val
+                if val and val.strip():
+                    fixed_row[key] = detect_type(val.strip())
             
             if fixed_row:
                 cols = list(fixed_row.keys())
@@ -86,15 +97,11 @@ async def restore_from_zip():
         
         print(f"   ✅ Загружено: {success}/{len(rows)}")
     
-    # Включаем проверки обратно
     await conn.execute("SET session_replication_role = 'origin';")
     await conn.close()
     
-    # Удаляем временную папку
     import shutil
-    shutil.rmtree("db_restore", ignore_errors=True)
-    
+    shutil.rmtree("csv_restore", ignore_errors=True)
     print("\n🎉 ВОССТАНОВЛЕНИЕ ЗАВЕРШЕНО!")
 
-if __name__ == "__main__":
-    asyncio.run(restore_from_zip())
+asyncio.run(restore_from_csv())
