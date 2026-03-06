@@ -32,7 +32,7 @@ async def force_restore():
     with open("db_backup_20260306_142038.json", "r") as f:
         backup = json.load(f)
     
-    print("✅ Файл загружен")
+    print("✅ Файл Загружен")
     conn = await asyncpg.connect(DATABASE_URL)
     
     # Отключаем проверки
