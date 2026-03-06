@@ -2313,22 +2313,10 @@ async def finish_heist_joining(heist_id: int, join_until: datetime):
             if not participants:
                 await conn.execute("UPDATE heists SET status='finished' WHERE id=$1", heist_id)
                 # Редактируем сообщение, чтобы показать отмену
-                try:
-                    if heist['media']:
-                        await bot.edit_message_caption(
-                            chat_id=heist['chat_id'],
-                            message_id=heist['message_id'],
-                            caption="❌ Никто не присоединился к налёту. Он отменён."
-                        )
-                    else:
-                        await bot.edit_message_text(
-                            "❌ Никто не присоединился к налёту. Он отменён.",
-                            chat_id=heist['chat_id'],
-                            message_id=heist['message_id']
-                        )
-                except:
-                    pass
-                return
+                if not participants:
+    await conn.execute("UPDATE heists SET status='finished' WHERE id=$1", heist_id)
+    await safe_send_chat(heist['chat_id'], "❌ Никто не присоединился к налёту. Он отменён.")
+    return
 
             # Редактируем сообщение, убираем кнопки
             try:
@@ -3253,12 +3241,12 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
         builder.row(*row1)
     
     row2 = []
-    if "manage_giveaways" in permissions:
-        row2.append(KeyboardButton(text="🎁 Розыгрыши"))
-    if "manage_tasks" in permissions:   # Обратите внимание: добавим это право позже или используем manage_users
-        row2.append(KeyboardButton(text="📋 Задания"))
-    if row2:
-        builder.row(*row2)
+if "manage_giveaways" in permissions:
+    row2.append(KeyboardButton(text="🎁 Управление розыгрышами"))
+if "manage_users" in permissions:
+    row2.append(KeyboardButton(text="📋 Управление заданиями"))
+if row2:
+    builder.row(*row2)
     
     row3 = []
     if "manage_channels" in permissions:
