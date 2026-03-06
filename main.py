@@ -11,6 +11,19 @@ if "?" in DATABASE_URL:
 else:
     DATABASE_URL += "?sslmode=require"
 
+def fix_value(value):
+    """Преобразует строки в правильные типы"""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        # Пробуем преобразовать в дату
+        try:
+            if 'T' in value:
+                return datetime.fromisoformat(value.replace('Z', '+00:00'))
+        except:
+            pass
+    return value
+
 async def restore():
     print("📂 Читаю файл db_backup_20260306_142038.json...")
     with open("db_backup_20260306_142038.json", "r", encoding="utf-8") as f:
@@ -33,11 +46,21 @@ async def restore():
         
         # Вставляем данные
         for row in rows:
-            cols = list(row.keys())
-            vals = list(row.values())
+            # Преобразуем значения
+            fixed_row = {}
+            for key, val in row.items():
+                fixed_row[key] = fix_value(val)
+            
+            cols = list(fixed_row.keys())
+            vals = list(fixed_row.values())
             placeholders = ",".join(f"${i+1}" for i in range(len(vals)))
             query = f"INSERT INTO {table_name} ({','.join(cols)}) VALUES ({placeholders})"
-            await conn.execute(query, *vals)
+            
+            try:
+                await conn.execute(query, *vals)
+            except Exception as e:
+                print(f"   ⚠️ Ошибка в {table_name}: {e}")
+                print(f"      Данные: {fixed_row}")
     
     # Включаем проверки обратно
     await conn.execute("SET session_replication_role = 'origin';")
