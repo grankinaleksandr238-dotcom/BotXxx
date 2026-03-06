@@ -6178,7 +6178,6 @@ async def cmd_jail(message: Message, state: FSMContext):
 # ==================== ОБРАБОТЧИК ВВОДА КАМЕРЫ (ИЗ ЛС) ====================
 @dp.message(JailProcess.cell)
 async def jail_cell_input(message: Message, state: FSMContext):
-async def jail_cell_input(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
         await message.answer("❌ Процесс отменён.", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
