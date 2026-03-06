@@ -6176,7 +6176,8 @@ async def cmd_jail(message: Message, state: FSMContext):
         await auto_delete_reply(message, "❌ Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.")
 
 # ==================== ОБРАБОТЧИК ВВОДА КАМЕРЫ (ИЗ ЛС) ====================
-@dp.message(JailProcess.cell, F.text)
+@dp.message(JailProcess.cell)
+async def jail_cell_input(message: Message, state: FSMContext):
 async def jail_cell_input(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
         await state.clear()
