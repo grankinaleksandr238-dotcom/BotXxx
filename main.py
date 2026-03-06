@@ -2306,14 +2306,14 @@ async def finish_heist_joining(heist_id: int, join_until: datetime):
             if not heist:
                 return
             await conn.execute(
-    "UPDATE heists SET status='splitting' WHERE id=$1",
-    heist_id
-)
-participants = await conn.fetch("SELECT user_id FROM heist_participants WHERE heist_id=$1", heist_id)
-if not participants:
-    await conn.execute("UPDATE heists SET status='finished' WHERE id=$1", heist_id)
-    await safe_send_chat(heist['chat_id'], "❌ Никто не присоединился к налёту. Он отменён.")
-    return
+                "UPDATE heists SET status='splitting' WHERE id=$1",
+                heist_id
+            )
+            participants = await conn.fetch("SELECT user_id FROM heist_participants WHERE heist_id=$1", heist_id)
+            if not participants:
+                await conn.execute("UPDATE heists SET status='finished' WHERE id=$1", heist_id)
+                await safe_send_chat(heist['chat_id'], "❌ Никто не присоединился к налёту. Он отменён.")
+                return
 
             # Редактируем сообщение, убираем кнопки
             try:
