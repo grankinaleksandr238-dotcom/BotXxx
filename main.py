@@ -3237,15 +3237,15 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
     if row1:
         builder.row(*row1)
     
-row2 = []
-if "manage_giveaways" in permissions:
-    row2.append(KeyboardButton(text="🎁 Управление розыгрышами"))
-if "manage_users" in permissions:
-    row2.append(KeyboardButton(text="📋 Управление заданиями"))
-if row2:
-    builder.row(*row2)
+    row2 = []
+    if "manage_giveaways" in permissions:
+        row2.append(KeyboardButton(text="🎁 Управление розыгрышами"))
+    if "manage_users" in permissions:
+        row2.append(KeyboardButton(text="📋 Управление заданиями"))
+    if row2:
+        builder.row(*row2)
     
-row3 = []
+    row3 = []
     if "manage_channels" in permissions:
         row3.append(KeyboardButton(text="📢 Каналы"))
     if "manage_chats" in permissions:
