@@ -1,13 +1,23 @@
 import asyncio
 import os
-import json
 import asyncpg
 from datetime import datetime
 
-# ==== ЕДИНСТВЕННОЕ, ЧТО НУЖНО ИЗМЕНИТЬ ====
-DATABASE_URL = "postgresql://username:password@localhost:5432/dbname"
-# Замените на свои данные от БД!
-# ==========================================
+# ==== ЭТО БЕРЁМ ИЗ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ ====
+# Не меняйте эту часть!
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+
+# Если DATABASE_URL не задан, используем параметры по умолчанию для Railway/Render
+if not DATABASE_URL:
+    # Для Railway
+    DATABASE_URL = f"postgresql://{os.getenv('PGUSER')}:{os.getenv('PGPASSWORD')}@" \
+                   f"{os.getenv('PGHOST')}:{os.getenv('PGPORT')}/{os.getenv('PGDATABASE')}"
+    
+    # Если и это не работает, пробуем localhost (для теста)
+    if not os.getenv('PGHOST'):
+        DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/postgres?sslmode=disable"
+
+print(f"🔌 Пробуем подключиться к: {DATABASE_URL.split('@')[1] if '@' in DATABASE_URL else DATABASE_URL}")
 
 # ==== ПОЛНОЕ СОЗДАНИЕ ВСЕХ ТАБЛИЦ (32 шт) ====
 CREATE_TABLES = [
@@ -438,16 +448,31 @@ async def main():
     print("🚀 НАЧАЛО ПОЛНОГО ВОССТАНОВЛЕНИЯ БД")
     print("=" * 50)
     
+    if not DATABASE_URL:
+        print("❌ Нет DATABASE_URL! Укажите переменные окружения")
+        return
+    
     try:
         # Подключаемся
         conn = await asyncpg.connect(DATABASE_URL)
         print("✅ Подключено к БД")
         
-        # Удаляем всё
-        tables = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")
-        for t in tables:
-            await conn.execute(f'DROP TABLE IF EXISTS "{t["tablename"]}" CASCADE')
-        print(f"🗑️ Удалено {len(tables)} таблиц")
+        # Получаем список таблиц
+        tables = await conn.fetch("""
+            SELECT tablename FROM pg_tables 
+            WHERE schemaname='public' AND tablename NOT LIKE 'pg_%'
+        """)
+        
+        if tables:
+            print(f"\n🗑️ Найдено {len(tables)} таблиц, удаляем...")
+            for t in tables:
+                try:
+                    await conn.execute(f'DROP TABLE IF EXISTS "{t["tablename"]}" CASCADE')
+                    print(f"  - {t['tablename']}")
+                except:
+                    pass
+        else:
+            print("\n📦 Таблиц нет, создаём новые...")
         
         # Создаём заново
         print("\n🏗️ СОЗДАНИЕ ТАБЛИЦ:")
@@ -459,17 +484,17 @@ async def main():
                 print(f"  ❌ {i:2d}. Ошибка: {e}")
         
         print("\n" + "=" * 50)
-        print("✅ БАЗА ДАННЫХ ПОЛНОСТЬЮ СОЗДАНА!")
-        print("\nТеперь база пустая. Если у вас есть дамп в JSON:")
-        print("1. Поместите файл db_backup.json в эту же папку")
-        print("2. Запустите эту же программу ещё раз с параметром load")
-        print("\nИли просто перезапустите бота - он сам создаст")
-        print("необходимые начальные данные (настройки, бизнесы и т.д.)")
+        print("✅ БАЗА ДАННЫХ УСПЕШНО СОЗДАНА!")
+        print("\n👉 Теперь перезапустите основного бота")
         
         await conn.close()
         
     except Exception as e:
-        print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
+        print(f"\n❌ ОШИБКА: {e}")
+        print("\n💡 Решение:")
+        print("1. Проверьте DATABASE_URL в переменных окружения")
+        print("2. Убедитесь, что БД доступна с этого сервера")
+        print("3. Попробуйте перезапустить контейнер с БД")
 
 if __name__ == "__main__":
     asyncio.run(main())
