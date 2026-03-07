@@ -2932,7 +2932,7 @@ async def get_user_username(user_id: int, conn=None) -> str:
             return await _get(new_conn)
 
 # ==================== РЕГИСТРАЦИЯ МИДЛВАРЕЙ ====================
-dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
+# dp.message.middleware(ThrottlingMiddleware(rate_limit=0.5))
 dp.message.middleware(GlobalCooldownMiddleware())
 
 # ==================== КОНЕЦ ЧАСТИ 1 ====================
