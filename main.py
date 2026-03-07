@@ -974,6 +974,7 @@ async def migrate_date_columns(conn):
 @db_retry()
 async def init_db():
     async with db_pool.acquire() as conn:
+        # ===== 1. Таблицы без внешних ключей =====
         # Таблица users
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
@@ -1022,25 +1023,8 @@ async def init_db():
                 defense INTEGER DEFAULT 1
             )
         ''')
-        # Уникальное ограничение на username
-        constraint_exists = await conn.fetchval("""
-            SELECT 1 FROM information_schema.table_constraints
-            WHERE constraint_name = 'users_username_unique' AND table_name = 'users'
-        """)
-        if not constraint_exists:
-            await conn.execute('''
-                WITH duplicates AS (
-                    SELECT user_id, username,
-                           ROW_NUMBER() OVER (PARTITION BY username ORDER BY user_id DESC) as rn
-                    FROM users WHERE username IS NOT NULL
-                )
-                DELETE FROM users WHERE user_id IN (SELECT user_id FROM duplicates WHERE rn > 1)
-            ''')
-            await conn.execute('ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)')
-        else:
-                    logging.info("Ограничение users_username_unique уже существует, пропускаем создание")
 
-        # СНАЧАЛА создаём business_types (базовая таблица)
+        # Таблица business_types (базовая)
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS business_types (
                 id SERIAL PRIMARY KEY,
@@ -1053,34 +1037,6 @@ async def init_db():
                 available BOOLEAN DEFAULT TRUE,
                 image_key TEXT,
                 lifetime_hours INTEGER DEFAULT 720
-            )
-        ''')
-
-        # ПОТОМ создаём user_businesses (зависимая таблица)
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_businesses (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                business_type_id INTEGER NOT NULL,
-                level INTEGER DEFAULT 1,
-                last_collection TIMESTAMP,
-                purchased_at TIMESTAMP DEFAULT NOW(),
-                expires_at TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                FOREIGN KEY (business_type_id) REFERENCES business_types(id) ON DELETE CASCADE,
-                UNIQUE(user_id, business_type_id)
-            )
-        ''')
-
-        # Таблица user_last_bets
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_last_bets (
-                user_id BIGINT,
-                game TEXT,
-                bet_amount NUMERIC(12,2),
-                bet_data JSONB,
-                updated_at TIMESTAMP DEFAULT NOW(),
-                PRIMARY KEY (user_id, game)
             )
         ''')
 
@@ -1149,18 +1105,6 @@ async def init_db():
             )
         ''')
 
-        # Таблица purchases
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS purchases (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT,
-                item_id INTEGER,
-                purchase_date TIMESTAMP DEFAULT NOW(),
-                status TEXT DEFAULT 'pending',
-                admin_comment TEXT
-            )
-        ''')
-
         # Таблица promocodes
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS promocodes (
@@ -1204,7 +1148,7 @@ async def init_db():
             )
         ''')
 
-        # Таблица participants
+        # Таблица participants (зависит от giveaways, но пока без FK)
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS participants (
                 user_id BIGINT,
@@ -1264,18 +1208,6 @@ async def init_db():
             )
         ''')
 
-        # Таблица user_tasks
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_tasks (
-                user_id BIGINT,
-                task_id INTEGER,
-                completed_at TIMESTAMP,
-                expires_at TIMESTAMP,
-                status TEXT DEFAULT 'completed',
-                PRIMARY KEY (user_id, task_id)
-            )
-        ''')
-
         # Таблица level_rewards
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS level_rewards (
@@ -1301,34 +1233,6 @@ async def init_db():
                 status TEXT DEFAULT 'joining',
                 message_id BIGINT,
                 base_text TEXT
-            )
-        ''')
-
-        # Таблица heist_participants
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS heist_participants (
-                heist_id INTEGER REFERENCES heists(id) ON DELETE CASCADE,
-                user_id BIGINT NOT NULL,
-                base_share NUMERIC(12,2) NOT NULL,
-                current_share NUMERIC(12,2) NOT NULL,
-                defense_bonus INTEGER DEFAULT 0,
-                joined_at TIMESTAMP NOT NULL,
-                betray_choice TEXT DEFAULT NULL,
-                betray_target_id BIGINT DEFAULT NULL,
-                PRIMARY KEY (heist_id, user_id)
-            )
-        ''')
-
-        # Таблица heist_betrayals
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS heist_betrayals (
-                id SERIAL PRIMARY KEY,
-                heist_id INTEGER REFERENCES heists(id) ON DELETE CASCADE,
-                attacker_id BIGINT NOT NULL,
-                target_id BIGINT NOT NULL,
-                success BOOLEAN NOT NULL,
-                amount NUMERIC(12,2) NOT NULL,
-                created_at TIMESTAMP NOT NULL
             )
         ''')
 
@@ -1400,8 +1304,8 @@ async def init_db():
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS bitcoin_trades (
                 id SERIAL PRIMARY KEY,
-                buy_order_id INTEGER REFERENCES bitcoin_orders(id),
-                sell_order_id INTEGER REFERENCES bitcoin_orders(id),
+                buy_order_id INTEGER,
+                sell_order_id INTEGER,
                 amount NUMERIC(12,4) NOT NULL,
                 price INTEGER NOT NULL,
                 buyer_id BIGINT NOT NULL,
@@ -1444,7 +1348,89 @@ async def init_db():
             )
         ''')
 
-        # Индексы
+        # ===== 2. Таблицы, которые зависят от других (с внешними ключами) =====
+
+        # Таблица user_tasks (зависит от users, tasks)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_tasks (
+                user_id BIGINT,
+                task_id INTEGER,
+                completed_at TIMESTAMP,
+                expires_at TIMESTAMP,
+                status TEXT DEFAULT 'completed',
+                PRIMARY KEY (user_id, task_id)
+            )
+        ''')
+
+        # Таблица purchases (зависит от users, shop_items)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS purchases (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT,
+                item_id INTEGER,
+                purchase_date TIMESTAMP DEFAULT NOW(),
+                status TEXT DEFAULT 'pending',
+                admin_comment TEXT
+            )
+        ''')
+
+        # Таблица user_businesses (зависит от users, business_types)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_businesses (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                business_type_id INTEGER NOT NULL,
+                level INTEGER DEFAULT 1,
+                last_collection TIMESTAMP,
+                purchased_at TIMESTAMP DEFAULT NOW(),
+                expires_at TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (business_type_id) REFERENCES business_types(id) ON DELETE CASCADE,
+                UNIQUE(user_id, business_type_id)
+            )
+        ''')
+
+        # Таблица user_last_bets (зависит от users)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_last_bets (
+                user_id BIGINT,
+                game TEXT,
+                bet_amount NUMERIC(12,2),
+                bet_data JSONB,
+                updated_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (user_id, game)
+            )
+        ''')
+
+        # Таблица heist_participants (зависит от heists, users)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS heist_participants (
+                heist_id INTEGER REFERENCES heists(id) ON DELETE CASCADE,
+                user_id BIGINT NOT NULL,
+                base_share NUMERIC(12,2) NOT NULL,
+                current_share NUMERIC(12,2) NOT NULL,
+                defense_bonus INTEGER DEFAULT 0,
+                joined_at TIMESTAMP NOT NULL,
+                betray_choice TEXT DEFAULT NULL,
+                betray_target_id BIGINT DEFAULT NULL,
+                PRIMARY KEY (heist_id, user_id)
+            )
+        ''')
+
+        # Таблица heist_betrayals (зависит от heists)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS heist_betrayals (
+                id SERIAL PRIMARY KEY,
+                heist_id INTEGER REFERENCES heists(id) ON DELETE CASCADE,
+                attacker_id BIGINT NOT NULL,
+                target_id BIGINT NOT NULL,
+                success BOOLEAN NOT NULL,
+                amount NUMERIC(12,2) NOT NULL,
+                created_at TIMESTAMP NOT NULL
+            )
+        ''')
+
+        # ===== 3. Индексы =====
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_balance ON users(balance DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_username_lower ON users(LOWER(username))")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_purchases_user_id ON purchases(user_id)")
@@ -1483,8 +1469,28 @@ async def init_db():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_level_desc ON users(level DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_warnings_user_chat ON warnings(user_id, chat_id)")
 
+        # ===== 4. Миграции и дополнительные ограничения =====
         await migrate_date_columns(conn)
 
+        # Уникальное ограничение на username
+        constraint_exists = await conn.fetchval("""
+            SELECT 1 FROM information_schema.table_constraints
+            WHERE constraint_name = 'users_username_unique' AND table_name = 'users'
+        """)
+        if not constraint_exists:
+            await conn.execute('''
+                WITH duplicates AS (
+                    SELECT user_id, username,
+                           ROW_NUMBER() OVER (PARTITION BY username ORDER BY user_id DESC) as rn
+                    FROM users WHERE username IS NOT NULL
+                )
+                DELETE FROM users WHERE user_id IN (SELECT user_id FROM duplicates WHERE rn > 1)
+            ''')
+            await conn.execute('ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)')
+        else:
+            logging.info("Ограничение users_username_unique уже существует, пропускаем создание")
+
+    # ===== 5. Инициализация данных по умолчанию =====
     await init_settings()
     await init_level_rewards()
     await init_business_types()
