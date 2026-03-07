@@ -3638,3 +3638,902 @@ def completed_giveaway_detail_keyboard(giveaway_id: int) -> InlineKeyboardMarkup
     ])
 
 # ==================== КОНЕЦ ЧАСТИ 2 ====================
+# ==================== ЧАСТЬ 3: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ (ЛИЧНЫЕ СООБЩЕНИЯ) ====================
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (для уровней) ====================
+async def get_level_reward_coins(level: int) -> float:
+    async with db_pool.acquire() as conn:
+        val = await conn.fetchval("SELECT coins FROM level_rewards WHERE level=$1", level)
+        return float(val) if val else 0.0
+
+async def get_level_reward_rep(level: int) -> int:
+    async with db_pool.acquire() as conn:
+        val = await conn.fetchval("SELECT reputation FROM level_rewards WHERE level=$1", level)
+        return val if val else 0
+
+# ==================== ГЛОБАЛЬНЫЙ ОБРАБОТЧИК /cancel ====================
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    current_state = await state.get_state()
+    if current_state is None:
+        return
+    await state.clear()
+    user_id = message.from_user.id
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    await message.answer("❌ Действие отменено.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК КНОПКИ "НАЗАД" ====================
+@dp.message(F.text == "◀️ Назад")
+async def universal_back_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    current_state = await state.get_state()
+    user_id = message.from_user.id
+    is_admin_user = await is_admin(user_id)
+
+    if current_state is None:
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
+        return
+
+    # Определяем группу состояний и возвращаем в соответствующее меню
+    if current_state.startswith('DiceBet') or current_state.startswith('GuessBet') or \
+       current_state.startswith('SlotsBet') or current_state.startswith('RouletteBet'):
+        await state.clear()
+        await casino_menu(message)
+
+    elif current_state.startswith('AddBalance') or current_state.startswith('RemoveBalance') or \
+         current_state.startswith('AddReputation') or current_state.startswith('RemoveReputation') or \
+         current_state.startswith('AddExp') or current_state.startswith('SetLevel') or \
+         current_state.startswith('AddBitcoin') or current_state.startswith('RemoveBitcoin') or \
+         current_state.startswith('AddAuthority') or current_state.startswith('RemoveAuthority') or \
+         current_state.startswith('FindUser') or current_state.startswith('AdminResetStats') or \
+         current_state.startswith('WarnUser') or current_state.startswith('ClearWarnings'):
+        await state.clear()
+        await admin_users_menu(message)
+
+    elif current_state.startswith('AddShopItem') or current_state.startswith('RemoveShopItem') or \
+         current_state.startswith('EditShopItem'):
+        await state.clear()
+        await admin_shop_menu(message)
+
+    elif current_state.startswith('CreateGiveaway') or current_state.startswith('CompleteGiveaway') or \
+         current_state.startswith('EditGiveaway'):
+        await state.clear()
+        permissions = await get_admin_permissions(user_id)
+        await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
+
+    elif current_state.startswith('AddChannel') or current_state.startswith('RemoveChannel'):
+        await state.clear()
+        await admin_channel_menu(message)
+
+    elif current_state.startswith('CreatePromocode'):
+        await state.clear()
+        await admin_promo_menu(message)
+
+    elif current_state.startswith('TaskManagement'):
+        await state.clear()
+        permissions = await get_admin_permissions(user_id)
+        await message.answer("Панель администратора:", reply_markup=admin_main_keyboard(permissions))
+
+    elif current_state.startswith('BlockUser') or current_state.startswith('UnblockUser'):
+        await state.clear()
+        await admin_users_menu(message)
+
+    elif current_state.startswith('AddJuniorAdmin') or current_state.startswith('RemoveJuniorAdmin') or \
+         current_state.startswith('EditAdminPermissions'):
+        await state.clear()
+        await admin_admins_menu(message)
+
+    elif current_state.startswith('SellBitcoin') or current_state.startswith('BuyBitcoin') or \
+         current_state.startswith('CancelBitcoinOrder') or current_state.startswith('BuyFromPrice') or \
+         current_state.startswith('SellToPrice'):
+        await state.clear()
+        await bitcoin_exchange_menu(message)
+
+    elif current_state.startswith('BuyBusiness') or current_state.startswith('UpgradeBusiness'):
+        await state.clear()
+        await my_businesses_handler(message)
+
+    elif current_state.startswith('AddBusiness') or current_state.startswith('EditBusiness') or \
+         current_state.startswith('ToggleBusiness'):
+        await state.clear()
+        await admin_business_menu(message)
+
+    elif current_state.startswith('AddMedia') or current_state.startswith('RemoveMedia'):
+        await state.clear()
+        await admin_media_menu(message)
+
+    elif current_state.startswith('TheftTarget'):
+        await state.clear()
+        await theft_menu(message)
+
+    elif current_state.startswith('PromoActivate'):
+        await state.clear()
+        await promo_handler(message)
+
+    elif current_state.startswith('UpgradeSkill'):
+        await state.clear()
+        await university_menu(message)
+
+    elif current_state.startswith('JailProcess'):
+        await state.clear()
+        await message.answer("❌ Процесс отменён.", reply_markup=main_menu_keyboard(is_admin_user))
+
+    elif current_state.startswith('PurchaseReject'):
+        await state.clear()
+        await admin_shop_menu(message)
+
+    elif current_state.startswith('PurchaseItem'):
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
+
+    else:
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(is_admin_user))
+
+# ==================== СТАРТ ====================
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await message.answer("⛔ Вы заблокированы в боте.")
+        return
+
+    args = message.text.split()
+    if len(args) > 1:
+        ref = args[1]
+        if ref.startswith('ref') and len(ref) > 3:
+            try:
+                referrer_id = int(ref[3:])
+                if referrer_id != user_id:
+                    async with db_pool.acquire() as conn:
+                        referrer_exists = await conn.fetchval("SELECT 1 FROM users WHERE user_id=$1", referrer_id)
+                        if referrer_exists and not await is_banned(referrer_id):
+                            existing = await conn.fetchval("SELECT 1 FROM referrals WHERE referred_id=$1", user_id)
+                            if not existing:
+                                await conn.execute(
+                                    "INSERT INTO referrals (referrer_id, referred_id, referred_date, reward_given, clicks) VALUES ($1, $2, $3, $4, 1) ON CONFLICT (referred_id) DO NOTHING",
+                                    referrer_id, user_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), False
+                                )
+                                await conn.execute("UPDATE referrals SET clicks = clicks + 1 WHERE referred_id=$1", user_id)
+                                await safe_send_message(referrer_id, f"🔗 Новый пользователь {message.from_user.first_name} зарегистрировался по вашей ссылке! Награда будет выдана после того, как он совершит {await get_setting('referral_required_thefts')} успешных ограблений.")
+            except:
+                pass
+
+    created, bonus = await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    if created:
+        await message.answer(f"🎁 Вам начислен стартовый бонус: {bonus} MLB!")
+
+    welcome_text = "Добро пожаловать в Malboro GAME! 🚬\nТут ты найдёшь: казино, розыгрыши, магазин, биткоин-биржа.\nА ещё можешь грабить других или участвовать в налётах!\nУ тебя 1 уровень. Зарабатывай опыт и повышай уровень!\n\nКанал: @lllMALBOROlll (подпишись!)"
+    await send_with_media(user_id, welcome_text, media_key='welcome')
+
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer(
+            "❗️ Для использования бота необходимо подписаться на наши каналы:",
+            reply_markup=subscription_inline(not_subscribed)
+        )
+        return
+
+    is_admin_user = await is_admin(user_id)
+    await message.answer(
+        "Главное меню:",
+        reply_markup=main_menu_keyboard(is_admin_user)
+    )
+
+@dp.message(Command("help"))
+async def cmd_help_private(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    text = (
+        "📚 <b>Доступные команды и разделы</b>\n\n"
+        "👤 Профиль – статистика и характеристики\n"
+        "🎁 Бонус – ежедневный бонус\n"
+        "🛒 Магазин – покупка подарков\n"
+        "🎰 Казино – азартные игры (кости, угадайка, слоты, рулетка)\n"
+        "🎟 Промокод – активация промокодов\n"
+        "🏆 Топ игроков – рейтинг по MLB, репутации, биткоинам и т.д.\n"
+        "💰 Мои покупки – история заказов\n"
+        "🔫 Ограбить – укради MLB у другого\n"
+        "📋 Задания – выполняй и получай награды\n"
+        "🔗 Рефералка – приглашай друзей\n"
+        "📊 Уровень – твой прогресс\n"
+        "🎁 Розыгрыши – активные и завершённые\n"
+        "🏪 Фарм – управление фармами (покупка за BTC)\n"
+        "💼 Биткоин-биржа – продавай и покупай BTC за MLB\n"
+        "🎓 Университет – прокачка навыков за авторитет\n"
+        "⚙️ Админка – для администраторов"
+    )
+    await message.answer(text)
+
+# ==================== ПРОВЕРКА ПОДПИСКИ ====================
+@dp.callback_query(F.data == "check_sub")
+async def check_subscription_callback(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
+        return
+    await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if ok:
+        await callback.message.delete()
+        is_admin_user = await is_admin(user_id)
+        await callback.message.answer(
+            "✅ Спасибо за подписку! Добро пожаловать.",
+            reply_markup=main_menu_keyboard(is_admin_user)
+        )
+    else:
+        await callback.answer("❌ Ты ещё не подписался на все каналы!", show_alert=True)
+        await callback.message.edit_reply_markup(reply_markup=subscription_inline(not_subscribed))
+    await callback.answer()
+
+@dp.callback_query(F.data == "no_link")
+async def no_link_callback(callback: CallbackQuery):
+    await callback.answer("Ссылка отсутствует. Подпишись вручную.", show_alert=True)
+
+# ==================== ПРОФИЛЬ ====================
+@dp.message(F.text == "👤 Профиль")
+async def profile_handler(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT balance, reputation, total_spent, negative_balance, joined_date, "
+            "theft_attempts, theft_success, theft_failed, theft_protected, "
+            "casino_wins, casino_losses, dice_wins, dice_losses, guess_wins, guess_losses, "
+            "slots_wins, slots_losses, roulette_wins, roulette_losses, "
+            "exp, level, "
+            "smuggle_success, smuggle_fail, "
+            "bitcoin_balance, authority_balance, "
+            "skill_share, skill_luck, skill_betray, "
+            "heists_joined, heists_betray_attempts, heists_betray_success, heists_betrayed_count, heists_earned, "
+            "strength, agility, defense "
+            "FROM users WHERE user_id=$1",
+            user_id
+        )
+    if not row:
+        await message.answer("❌ Профиль не найден.")
+        return
+
+    balance = float(row['balance'] or 0)
+    rep = row['reputation'] or 0
+    spent = float(row['total_spent'] or 0)
+    neg = float(row['negative_balance'] or 0)
+    joined = row['joined_date']
+    attempts = row['theft_attempts'] or 0
+    success = row['theft_success'] or 0
+    failed = row['theft_failed'] or 0
+    protected = row['theft_protected'] or 0
+    cw = row['casino_wins'] or 0
+    cl = row['casino_losses'] or 0
+    dw = row['dice_wins'] or 0
+    dl = row['dice_losses'] or 0
+    gw = row['guess_wins'] or 0
+    gl = row['guess_losses'] or 0
+    sw = row['slots_wins'] or 0
+    sl = row['slots_losses'] or 0
+    rw = row['roulette_wins'] or 0
+    rl = row['roulette_losses'] or 0
+    exp = row['exp'] or 0
+    level = row['level'] or 1
+    smuggle_success = row['smuggle_success'] or 0
+    smuggle_fail = row['smuggle_fail'] or 0
+    bitcoin = float(row['bitcoin_balance']) if row['bitcoin_balance'] is not None else 0.0
+    authority = row['authority_balance'] or 0
+
+    skill_share = row['skill_share'] or 0
+    skill_luck = row['skill_luck'] or 0
+    skill_betray = row['skill_betray'] or 0
+
+    heists_joined = row['heists_joined'] or 0
+    heists_betray_attempts = row['heists_betray_attempts'] or 0
+    heists_betray_success = row['heists_betray_success'] or 0
+    heists_betrayed_count = row['heists_betrayed_count'] or 0
+    heists_earned = float(row['heists_earned'] or 0)
+
+    strength = row['strength'] or 1
+    agility = row['agility'] or 1
+    defense = row['defense'] or 1
+
+    neg_text = f" (долг: {neg:.2f})" if neg > 0 else ""
+    level_mult = await get_setting_int("level_multiplier")
+    exp_needed = level * level_mult
+    bar = progress_bar(exp, exp_needed, 10)
+
+    share_bonus = skill_share * await get_setting_int("skill_share_bonus_per_level")
+    luck_bonus = skill_luck * await get_setting_int("skill_luck_bonus_per_level")
+    betray_bonus = skill_betray * await get_setting_int("skill_betray_bonus_per_level")
+
+    joined_str = joined if joined else 'неизвестно'
+
+    text = (
+        f"👤 <b>Твой профиль</b>\n"
+        f"📊 <b>Уровень:</b> {level}\n"
+        f"📈 <b>Опыт:</b> {exp}/{exp_needed}\n{bar}\n"
+        f"💰 Баланс: {balance:.2f} MLB{neg_text}\n"
+        f"₿ Биткоины: {bitcoin:.4f} BTC\n"
+        f"⭐️ Репутация: {rep}\n"
+        f"⚔️ Авторитет: {authority}\n"
+        f"📅 Зарегистрирован: {joined_str}\n\n"
+        f"<b>📊 Навыки (видны только тебе):</b>\n"
+        f"🎯 Доля: +{share_bonus}% к сумме грабежей\n"
+        f"🍀 Удача: +{luck_bonus}% уйти от ментов\n"
+        f"🔪 Кидалово: +{betray_bonus}% к успеху\n\n"
+        f"<b>📈 Статистика налётов:</b>\n"
+        f"Участий: {heists_joined}, заработано: {heists_earned:.2f} MLB\n"
+        f"Кидал: {heists_betray_attempts} (успешно: {heists_betray_success})\n"
+        f"Кинули тебя: {heists_betrayed_count} раз\n\n"
+        f"<b>🎰 Казино:</b>\n"
+        f"Кости: {dw}/{dl} | Угадайка: {gw}/{gl} | Слоты: {sw}/{sl} | Рулетка: {rw}/{rl}\n"
+        f"🔫 Ограблений: {attempts} (успешно: {success}, провал: {failed})\n"
+        f"📦 Контрабанда: успешно {smuggle_success}, провал {smuggle_fail}\n\n"
+        f"<b>📊 Характеристики:</b>\n"
+        f"💪 Сила: {strength} | 🏃 Ловкость: {agility} | 🛡 Защита: {defense}"
+    )
+    await send_with_media(user_id, text, media_key='profile', reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== УРОВЕНЬ ====================
+@dp.message(F.text == "📊 Уровень")
+async def level_handler(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    level = await get_user_level(user_id)
+    exp = await get_user_exp(user_id)
+    level_mult = await get_setting_int("level_multiplier")
+    exp_needed = level * level_mult
+    bar = progress_bar(exp, exp_needed, 10)
+    next_coins = await get_level_reward_coins(level+1)
+    next_rep = await get_level_reward_rep(level+1)
+    text = (
+        f"📊 <b>Твой уровень</b>\n\n"
+        f"Уровень: {level}\n"
+        f"Опыт: {exp} / {exp_needed}\n"
+        f"{bar}\n\n"
+        f"За повышение уровня ты получаешь MLB, репутацию и очки статов!\n"
+        f"Следующая награда: +{next_coins:.2f} MLB, +{next_rep} репутации."
+    )
+    await message.answer(text, reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== БОНУС ====================
+@dp.message(F.text == "🎁 Бонус")
+async def bonus_handler(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        last_bonus = await conn.fetchval("SELECT last_bonus FROM users WHERE user_id=$1", user_id)
+
+        now = datetime.now()
+        if last_bonus:
+            if last_bonus.date() == now.date():
+                next_bonus = last_bonus + timedelta(days=1)
+                time_left = next_bonus - now
+                hours, remainder = divmod(time_left.seconds, 3600)
+                minutes, _ = divmod(remainder, 60)
+                await message.answer(f"⏳ Бонус уже получен сегодня. Следующий через {hours} ч {minutes} мин.")
+                return
+
+        bonus = random.randint(3, 12)
+        phrase = f"🎉 Отлично, лови +{bonus} MLB!"
+
+        await conn.execute(
+            "UPDATE users SET balance = balance + $1, last_bonus = $2 WHERE user_id=$3",
+            bonus, now, user_id
+        )
+    await message.answer(phrase, reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== ТОП ИГРОКОВ ====================
+@dp.message(F.text == "🏆 Топ игроков")
+async def leaderboard_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💰 Самые богатые")],
+            [KeyboardButton(text="💸 Транжиры")],
+            [KeyboardButton(text="🔫 Крадуны")],
+            [KeyboardButton(text="⭐️ По репутации")],
+            [KeyboardButton(text="₿ По биткоинам")],
+            [KeyboardButton(text="📈 По уровню")],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Выбери категорию топа:", reply_markup=kb)
+
+async def show_top(message: Message, field: str, title: str, page: int = 1):
+    offset = (page - 1) * ITEMS_PER_PAGE
+    async with db_pool.acquire() as conn:
+        if field == 'bitcoin_balance':
+            order_expr = "bitcoin_balance"
+        else:
+            order_expr = field
+        total = await conn.fetchval("SELECT COUNT(*) FROM users")
+        rows = await conn.fetch(
+            f"SELECT first_name, {order_expr} as value FROM users ORDER BY value DESC LIMIT $1 OFFSET $2",
+            ITEMS_PER_PAGE, offset
+        )
+    if not rows:
+        await message.answer("Нет данных.")
+        return
+    text = f"{title} (страница {page}):\n\n"
+    for idx, row in enumerate(rows, start=offset+1):
+        val = row['value']
+        if field == 'bitcoin_balance':
+            val = f"{float(val):.4f}"
+        elif field in ['balance', 'total_spent']:
+            val = f"{float(val):.2f}"
+        text += f"{idx}. {row['first_name']} – {val}\n"
+    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    kb = None
+    if total_pages > 1:
+        builder = InlineKeyboardBuilder()
+        if page > 1:
+            builder.button(text="◀️", callback_data=f"top_{field}_{page-1}")
+        if page < total_pages:
+            builder.button(text="▶️", callback_data=f"top_{field}_{page+1}")
+        kb = builder.as_markup()
+    await message.answer(text, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("top_"))
+async def top_pagination(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.split("_")
+    field = parts[1]
+    page = int(parts[2])
+    titles = {
+        "balance": "💰 Самые богатые",
+        "total_spent": "💸 Транжиры",
+        "theft_success": "🔫 Крадуны",
+        "reputation": "⭐️ По репутации",
+        "bitcoin_balance": "₿ По биткоинам",
+        "level": "📈 По уровню"
+    }
+    title = titles.get(field, "Топ")
+    await show_top(callback.message, field, title, page)
+
+@dp.message(F.text == "💰 Самые богатые")
+async def top_rich_handler(message: Message):
+    await show_top(message, "balance", "💰 Самые богатые")
+
+@dp.message(F.text == "💸 Транжиры")
+async def top_spenders_handler(message: Message):
+    await show_top(message, "total_spent", "💸 Транжиры")
+
+@dp.message(F.text == "🔫 Крадуны")
+async def top_thieves_handler(message: Message):
+    await show_top(message, "theft_success", "🔫 Крадуны")
+
+@dp.message(F.text == "⭐️ По репутации")
+async def top_reputation_handler(message: Message):
+    await show_top(message, "reputation", "⭐️ По репутации")
+
+@dp.message(F.text == "₿ По биткоинам")
+async def top_bitcoin_handler(message: Message):
+    await show_top(message, "bitcoin_balance", "₿ По биткоинам")
+
+@dp.message(F.text == "📈 По уровню")
+async def top_level_handler(message: Message):
+    await show_top(message, "level", "📈 По уровню")
+
+# ==================== КАЗИНО ====================
+@dp.message(F.text == "🎰 Казино")
+async def casino_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    min_level = await get_setting_int("min_level_casino")
+    level = await get_user_level(user_id)
+    if level < min_level:
+        await message.answer(f"❌ Для доступа к казино нужен {min_level} уровень. Твой уровень: {level}")
+        return
+    await send_with_media(user_id, "Выбери игру:", media_key='casino', reply_markup=casino_menu_keyboard())
+
+# ----- Кости -----
+@dp.message(F.text == "🎲 Кости")
+async def dice_start(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    min_level = await get_setting_int("min_level_casino")
+    level = await get_user_level(user_id)
+    if level < min_level:
+        await message.answer(f"❌ Для этой игры нужен {min_level} уровень. Твой уровень: {level}")
+        return
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Введи сумму ставки (можно дробную):", reply_markup=back_keyboard())
+    await state.set_state(DiceBet.amount)
+
+@dp.message(DiceBet.amount, F.text)
+async def dice_bet(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    ok, remaining = await check_global_cooldown(message.from_user.id, "dice")
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {remaining} сек.")
+        await state.clear()
+        return
+
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    min_bet = await get_setting_float("casino_min_bet")
+    max_bet = await get_setting_float("casino_max_bet")
+    max_input = await get_setting_float("max_input_number")
+    if amount < min_bet:
+        await message.answer(f"❌ Минимальная ставка {min_bet:.2f} MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_bet:
+        await message.answer(f"❌ Максимальная ставка {max_bet:.2f}.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_input:
+        await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > balance:
+        await message.answer("❌ Недостаточно MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    dice1 = random.randint(1, 6)
+    dice2 = random.randint(1, 6)
+    total = dice1 + dice2
+
+    win_chance = await get_setting_float("casino_win_chance")
+    win = random.random() * 100 <= win_chance
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await message.answer("❌ Ошибка при списании ставки.")
+                await state.clear()
+                return
+            await update_user_game_stats(user_id, 'dice', win, conn=conn)
+            if win:
+                multiplier = 2.0
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_dice_win")
+                phrase = f"🎲 {dice1} + {dice2} = {total} — Победа! +{profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_dice_lose")
+                phrase = f"🎲 {dice1} + {dice2} = {total} — Проигрыш. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    await save_last_bet(user_id, 'dice', amount)
+    await set_global_cooldown(user_id, "dice")
+
+    await message.answer(phrase, reply_markup=repeat_bet_keyboard('dice'))
+    await state.clear()
+
+# ----- Угадай число (с кнопками) -----
+@dp.message(F.text == "🔢 Угадай число")
+async def guess_start(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    min_level = await get_setting_int("min_level_casino")
+    level = await get_user_level(user_id)
+    if level < min_level:
+        await message.answer(f"❌ Для этой игры нужен {min_level} уровень. Твой уровень: {level}")
+        return
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Введи сумму ставки (можно дробную):", reply_markup=back_keyboard())
+    await state.set_state(GuessBet.amount)
+
+@dp.message(GuessBet.amount, F.text)
+async def guess_bet(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    ok, remaining = await check_global_cooldown(message.from_user.id, "guess")
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {remaining} сек.")
+        await state.clear()
+        return
+
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    min_bet = await get_setting_float("casino_min_bet")
+    max_bet = await get_setting_float("casino_max_bet")
+    max_input = await get_setting_float("max_input_number")
+    if amount < min_bet:
+        await message.answer(f"❌ Минимальная ставка {min_bet:.2f} MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_bet:
+        await message.answer(f"❌ Максимальная ставка {max_bet:.2f}.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_input:
+        await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > balance:
+        await message.answer("❌ Недостаточно MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    await state.update_data(amount=amount)
+    await message.answer("Выбери число от 1 до 5:", reply_markup=guess_number_keyboard())
+    await state.set_state(GuessBet.number)
+
+@dp.callback_query(GuessBet.number, F.data.startswith("guess_num_"))
+async def guess_number_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    guess = int(callback.data.split("_")[2])
+    data = await state.get_data()
+    amount = data['amount']
+    user_id = callback.from_user.id
+
+    win_chance = await get_setting_float("casino_win_chance")
+    win = random.random() * 100 <= win_chance
+
+    multiplier = 2.0
+    rep_reward = 1
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await callback.answer("❌ Ошибка при списании ставки.", show_alert=True)
+                await state.clear()
+                return
+            await update_user_game_stats(user_id, 'guess', win, conn=conn)
+            if win:
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                await update_user_reputation(user_id, rep_reward, conn=conn)
+                exp = await get_setting_int("exp_per_guess_win")
+                phrase = f"🔢 Ты угадал! Было {guess}. Выигрыш: +{profit:.2f} MLB и +{rep_reward} репутации!"
+            else:
+                exp = await get_setting_int("exp_per_guess_lose")
+                secret = random.randint(1, 5)
+                phrase = f"🔢 Не угадал. Было {secret}. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'number': guess}
+    await save_last_bet(user_id, 'guess', amount, bet_data)
+    await set_global_cooldown(user_id, "guess")
+
+    await callback.message.edit_text(phrase, reply_markup=repeat_bet_keyboard('guess'))
+    await state.clear()
+
+@dp.callback_query(GuessBet.number, F.data == "guess_cancel")
+async def guess_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await casino_menu(callback.message)
+
+# ----- Слоты -----
+@dp.message(F.text == "🍒 Слоты")
+async def slots_start(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    min_level = await get_setting_int("min_level_casino")
+    level = await get_user_level(user_id)
+    if level < min_level:
+        await message.answer(f"❌ Для этой игры нужен {min_level} уровень. Твой уровень: {level}")
+        return
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Введи сумму ставки (можно дробную):", reply_markup=back_keyboard())
+    await state.set_state(SlotsBet.amount)
+
+@dp.message(SlotsBet.amount, F.text)
+async def slots_bet(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    ok, remaining = await check_global_cooldown(message.from_user.id, "slots")
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {remaining} сек.")
+        await state.clear()
+        return
+
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    min_bet = await get_setting_float("casino_min_bet")
+    max_bet = await get_setting_float("casino_max_bet")
+    max_input = await get_setting_float("max_input_number")
+    if amount < min_bet:
+        await message.answer(f"❌ Минимальная ставка {min_bet:.2f} MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_bet:
+        await message.answer(f"❌ Максимальная ставка {max_bet:.2f}.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_input:
+        await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > balance:
+        await message.answer("❌ Недостаточно MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    anim = await message.answer("🍒 Запускаем слоты...")
+    stages = [
+        "🍒 | 🍋 | 🍊",
+        "🍋 | 🍊 | 7️⃣",
+        "🍊 | 7️⃣ | 💎",
+        "7️⃣ | 💎 | 🍒",
+    ]
+    for stage in stages:
+        await asyncio.sleep(0.3)
+        await anim.edit_text(stage)
+
+    win_prob = await get_setting_float("slots_win_probability")
+    win = random.random() * 100 <= win_prob
+    symbols = ['🍒', '🍋', '🍊', '7️⃣', '💎']
+    result = [random.choice(symbols) for _ in range(3)]
+    if win:
+        if random.random() < 0.1:
+            result = [random.choice(symbols) for _ in range(3)]
+            result[0] = result[1] = result[2] = random.choice(symbols)
+        else:
+            result = [random.choice(symbols) for _ in range(3)]
+    result_str = " | ".join(result)
+
+    if win and result[0] == result[1] == result[2]:
+        if result[0] == '7️⃣':
+            multiplier = await get_setting_float("slots_multiplier_seven")
+        elif result[0] == '💎':
+            multiplier = await get_setting_float("slots_multiplier_diamond")
+        else:
+            multiplier = await get_setting_float("slots_multiplier_three")
+    elif win:
+        multiplier = 2.0
+    else:
+        multiplier = 0
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await message.answer("❌ Ошибка при списании ставки.")
+                await state.clear()
+                return
+            await update_user_game_stats(user_id, 'slots', win, conn=conn)
+            if win:
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_slots_win")
+                phrase = f"🍒 {result_str} — Ура! Выигрыш x{multiplier:.1f}! +{profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_slots_lose")
+                phrase = f"🍒 {result_str} — Не повезло. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    await save_last_bet(user_id, 'slots', amount)
+    await set_global_cooldown(user_id, "slots")
+
+    await anim.edit_text(phrase, reply_markup=repeat_bet_keyboard('slots'))
+    await state.clear()
+
+# ==================== КОНЕЦ ЧАСТИ 3 ====================
