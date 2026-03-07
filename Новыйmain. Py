@@ -4535,3 +4535,1348 @@ async def slots_bet(message: Message, state: FSMContext):
     await state.clear()
 
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
+# ==================== ЧАСТЬ 4: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ – РУЛЕТКА, ПОВТОР СТАВОК, УНИВЕРСИТЕТ, МАГАЗИН, ПРОМОКОДЫ, РЕФЕРАЛКА, ЗАДАНИЯ, РОЗЫГРЫШИ, БИРЖА, ОГРАБЛЕНИЯ, ФАРМЫ ====================
+
+# ==================== РУЛЕТКА ====================
+@dp.message(F.text == "🎡 Рулетка")
+async def roulette_start(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    min_level = await get_setting_int("min_level_casino")
+    level = await get_user_level(user_id)
+    if level < min_level:
+        await message.answer(f"❌ Для этой игры нужен {min_level} уровень. Твой уровень: {level}")
+        return
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Введи сумму ставки (можно дробную):", reply_markup=back_keyboard())
+    await state.set_state(RouletteBet.amount)
+
+@dp.message(RouletteBet.amount, F.text)
+async def roulette_bet_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    ok, remaining = await check_global_cooldown(message.from_user.id, "roulette")
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {remaining} сек.")
+        await state.clear()
+        return
+
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    min_bet = await get_setting_float("casino_min_bet")
+    max_bet = await get_setting_float("casino_max_bet")
+    max_input = await get_setting_float("max_input_number")
+    if amount < min_bet:
+        await message.answer(f"❌ Минимальная ставка {min_bet:.2f} MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_bet:
+        await message.answer(f"❌ Максимальная ставка {max_bet:.2f}.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_input:
+        await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > balance:
+        await message.answer("❌ Недостаточно MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    await state.update_data(amount=amount)
+    await message.answer("Выбери тип ставки:", reply_markup=roulette_type_keyboard())
+    await state.set_state(RouletteBet.bet_type)
+
+@dp.callback_query(RouletteBet.bet_type, F.data.startswith("roulette_type_"))
+async def roulette_type_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bet_type = callback.data.split("_")[2]
+    if bet_type == "number":
+        await callback.message.edit_text("Выбери число от 0 до 36:", reply_markup=roulette_number_keyboard())
+        await state.set_state(RouletteBet.number)
+    else:
+        await state.update_data(bet_type=bet_type, number=None)
+        await process_roulette_bet(callback.message, state, callback.from_user.id)
+
+@dp.callback_query(RouletteBet.number, F.data.startswith("roulette_num_"))
+async def roulette_number_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    number = int(callback.data.split("_")[2])
+    await state.update_data(bet_type='number', number=number)
+    await process_roulette_bet(callback.message, state, callback.from_user.id)
+
+@dp.callback_query(RouletteBet.bet_type, F.data == "roulette_cancel")
+@dp.callback_query(RouletteBet.number, F.data == "roulette_cancel")
+async def roulette_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await casino_menu(callback.message)
+
+async def process_roulette_bet(message: Message, state: FSMContext, user_id: int):
+    data = await state.get_data()
+    amount = data['amount']
+    bet_type = data['bet_type']
+    bet_number = data.get('number')
+    anim = await message.answer("🎡 Крутим рулетку...")
+    for _ in range(3):
+        await asyncio.sleep(0.5)
+        await anim.edit_text("🎡 • •")
+        await asyncio.sleep(0.5)
+        await anim.edit_text("• 🎡 •")
+        await asyncio.sleep(0.5)
+        await anim.edit_text("• • 🎡")
+
+    number = random.randint(0, 36)
+    color = 'зелёное' if number == 0 else ('красное' if number % 2 == 0 else 'чёрное')
+
+    if bet_type == 'number':
+        win = number == bet_number
+    elif bet_type == 'red':
+        win = color == 'красное'
+    elif bet_type == 'black':
+        win = color == 'чёрное'
+    elif bet_type == 'green':
+        win = color == 'зелёное'
+    else:
+        win = False
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await message.answer("❌ Ошибка при списании ставки.")
+                await state.clear()
+                return
+            await update_user_game_stats(user_id, 'roulette', win, conn=conn)
+            if win:
+                if bet_type == 'number':
+                    multiplier = await get_setting_float("roulette_number_multiplier")
+                elif bet_type == 'green':
+                    multiplier = await get_setting_float("roulette_green_multiplier")
+                else:
+                    multiplier = await get_setting_float("roulette_color_multiplier")
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_roulette_win")
+                phrase = f"🎡 Выпало {number} {color}! Ты выиграл {profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_roulette_lose")
+                phrase = f"🎡 Выпало {number} {color}. Твоя ставка не сыграла. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'bet_type': bet_type, 'number': bet_number}
+    await save_last_bet(user_id, 'roulette', amount, bet_data)
+    await set_global_cooldown(user_id, "roulette")
+
+    await anim.edit_text(phrase, reply_markup=repeat_bet_keyboard('roulette'))
+    await state.clear()
+
+# ==================== ПОВТОР СТАВКИ ====================
+@dp.callback_query(F.data.startswith("repeat_"))
+async def repeat_bet_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    game = callback.data.split("_")[1]
+    user_id = callback.from_user.id
+    await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
+
+    ok, remaining = await check_global_cooldown(user_id, game)
+    if not ok:
+        await callback.answer(f"⏳ Подожди ещё {remaining} сек.", show_alert=True)
+        return
+
+    async with db_pool.acquire() as conn:
+        last = await conn.fetchrow(
+            "SELECT bet_amount, bet_data FROM user_last_bets WHERE user_id=$1 AND game=$2",
+            user_id, game
+        )
+        if not last:
+            await callback.answer("У тебя нет сохранённой ставки для этой игры.", show_alert=True)
+            return
+
+        amount = float(last['bet_amount'])
+        bet_data = json.loads(last['bet_data']) if last['bet_data'] else {}
+
+    balance = await get_user_balance(user_id)
+    if amount > balance:
+        await callback.answer("❌ Недостаточно MLB для повтора ставки.", show_alert=True)
+        return
+
+    chat_id = callback.message.chat.id
+
+    if game == 'dice':
+        await process_dice_repeat(user_id, amount, chat_id)
+    elif game == 'guess' and 'number' in bet_data:
+        number = bet_data['number']
+        await process_guess_repeat(user_id, amount, number, chat_id)
+    elif game == 'slots':
+        await process_slots_repeat(user_id, amount, chat_id)
+    elif game == 'roulette' and 'bet_type' in bet_data:
+        bet_type = bet_data['bet_type']
+        number = bet_data.get('number')
+        await process_roulette_repeat(user_id, amount, bet_type, number, chat_id)
+    else:
+        await callback.answer("Нет данных для повтора.", show_alert=True)
+        return
+
+    await set_global_cooldown(user_id, game)
+
+async def process_dice_repeat(user_id: int, amount: float, chat_id: int):
+    dice1 = random.randint(1, 6)
+    dice2 = random.randint(1, 6)
+    total = dice1 + dice2
+    win_chance = await get_setting_float("casino_win_chance")
+    win = random.random() * 100 <= win_chance
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'dice', win, conn=conn)
+            if win:
+                multiplier = 2.0
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_dice_win")
+                phrase = f"🎲 {dice1} + {dice2} = {total} — Победа! +{profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_dice_lose")
+                phrase = f"🎲 {dice1} + {dice2} = {total} — Проигрыш. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    await save_last_bet(user_id, 'dice', amount)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('dice'))
+
+async def process_guess_repeat(user_id: int, amount: float, number: int, chat_id: int):
+    win_chance = await get_setting_float("casino_win_chance")
+    win = random.random() * 100 <= win_chance
+    secret = random.randint(1, 5)
+
+    multiplier = 2.0
+    rep_reward = 1
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'guess', win, conn=conn)
+            if win:
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                await update_user_reputation(user_id, rep_reward, conn=conn)
+                exp = await get_setting_int("exp_per_guess_win")
+                phrase = f"🔢 Ты угадал! Было {secret}. Выигрыш: +{profit:.2f} MLB и +{rep_reward} репутации!"
+            else:
+                exp = await get_setting_int("exp_per_guess_lose")
+                phrase = f"🔢 Не угадал. Было {secret}. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'number': number}
+    await save_last_bet(user_id, 'guess', amount, bet_data)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('guess'))
+
+async def process_slots_repeat(user_id: int, amount: float, chat_id: int):
+    win_prob = await get_setting_float("slots_win_probability")
+    win = random.random() * 100 <= win_prob
+    symbols = ['🍒', '🍋', '🍊', '7️⃣', '💎']
+    result = [random.choice(symbols) for _ in range(3)]
+    if win:
+        if random.random() < 0.1:
+            result = [random.choice(symbols) for _ in range(3)]
+            result[0] = result[1] = result[2] = random.choice(symbols)
+        else:
+            result = [random.choice(symbols) for _ in range(3)]
+    result_str = " | ".join(result)
+
+    if win and result[0] == result[1] == result[2]:
+        if result[0] == '7️⃣':
+            multiplier = await get_setting_float("slots_multiplier_seven")
+        elif result[0] == '💎':
+            multiplier = await get_setting_float("slots_multiplier_diamond")
+        else:
+            multiplier = await get_setting_float("slots_multiplier_three")
+    elif win:
+        multiplier = 2.0
+    else:
+        multiplier = 0
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'slots', win, conn=conn)
+            if win:
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_slots_win")
+                phrase = f"🍒 {result_str} — Ура! Выигрыш x{multiplier:.1f}! +{profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_slots_lose")
+                phrase = f"🍒 {result_str} — Не повезло. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    await save_last_bet(user_id, 'slots', amount)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('slots'))
+
+async def process_roulette_repeat(user_id: int, amount: float, bet_type: str, number: int, chat_id: int):
+    spin = random.randint(0, 36)
+    color = 'зелёное' if spin == 0 else ('красное' if spin % 2 == 0 else 'чёрное')
+
+    if bet_type == 'number':
+        win = spin == number
+    elif bet_type == 'red':
+        win = color == 'красное'
+    elif bet_type == 'black':
+        win = color == 'чёрное'
+    elif bet_type == 'green':
+        win = color == 'зелёное'
+    else:
+        win = False
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'roulette', win, conn=conn)
+            if win:
+                if bet_type == 'number':
+                    multiplier = await get_setting_float("roulette_number_multiplier")
+                elif bet_type == 'green':
+                    multiplier = await get_setting_float("roulette_green_multiplier")
+                else:
+                    multiplier = await get_setting_float("roulette_color_multiplier")
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_roulette_win")
+                phrase = f"🎡 Выпало {spin} {color}! Ты выиграл {profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_roulette_lose")
+                phrase = f"🎡 Выпало {spin} {color}. Твоя ставка не сыграла. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'bet_type': bet_type, 'number': number}
+    await save_last_bet(user_id, 'roulette', amount, bet_data)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('roulette'))
+
+# ==================== УНИВЕРСИТЕТ (ПРОКАЧКА НАВЫКОВ) ====================
+@dp.message(F.text == "🎓 Университет")
+async def university_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    skills = await get_user_skills(user_id)
+    authority = await get_user_authority(user_id)
+    max_level = await get_setting_int("skill_max_level")
+    share_cost = await get_setting_int("skill_share_cost_per_level")
+    luck_cost = await get_setting_int("skill_luck_cost_per_level")
+    betray_cost = await get_setting_int("skill_betray_cost_per_level")
+    share_bonus = skills['skill_share'] * await get_setting_int("skill_share_bonus_per_level")
+    luck_bonus = skills['skill_luck'] * await get_setting_int("skill_luck_bonus_per_level")
+    betray_bonus = skills['skill_betray'] * await get_setting_int("skill_betray_bonus_per_level")
+    text = (
+        f"🎓 Криминальный университет\n\n"
+        f"Твой авторитет: {authority}\n\n"
+        f"<b>Навыки:</b>\n"
+        f"🎯 Доля: уровень {skills['skill_share']}/{max_level} (бонус к сумме грабежей: +{share_bonus}%)\n"
+        f"🍀 Удача: уровень {skills['skill_luck']}/{max_level} (бонус к уходу: +{luck_bonus}%)\n"
+        f"🔪 Кидалово: уровень {skills['skill_betray']}/{max_level} (бонус к успеху: +{betray_bonus}%)\n\n"
+        f"Стоимость прокачки:\n"
+        f"Доля: {share_cost} авт.\n"
+        f"Удача: {luck_cost} авт.\n"
+        f"Кидалово: {betray_cost} авт.\n\n"
+        f"Введи название навыка, который хочешь прокачать (доля, удача, кидалово):"
+    )
+    await message.answer(text, reply_markup=back_keyboard())
+
+@dp.message(F.text.lower().in_({"доля", "удача", "кидалово"}), StateFilter(None))
+async def upgrade_skill_choice(message: Message, state: FSMContext):
+    skill_map = {"доля": "share", "удача": "luck", "кидалово": "betray"}
+    skill = skill_map[message.text.lower()]
+    user_id = message.from_user.id
+    skills = await get_user_skills(user_id)
+    current_level = skills[f'skill_{skill}']
+    max_level = await get_setting_int("skill_max_level")
+    if current_level >= max_level:
+        await message.answer("❌ Этот навык уже максимального уровня.")
+        return
+    cost = await get_setting_int(f"skill_{skill}_cost_per_level")
+    authority = await get_user_authority(user_id)
+    if authority < cost:
+        await message.answer(f"❌ Недостаточно авторитета. Нужно {cost}, у тебя {authority}.")
+        return
+    await state.update_data(skill=skill, cost=cost)
+    await message.answer(f"Прокачать {message.text.lower()} до уровня {current_level+1} за {cost} авторитета? (да/нет)", reply_markup=back_keyboard())
+    await UpgradeSkill.confirming.set()
+
+@dp.message(UpgradeSkill.confirming, F.text)
+async def upgrade_skill_confirm(message: Message, state: FSMContext):
+    if message.text.lower() == 'нет' or message.text == "◀️ Назад":
+        await state.clear()
+        await university_menu(message)
+        return
+    if message.text.lower() == 'да':
+        data = await state.get_data()
+        skill = data['skill']
+        cost = data['cost']
+        user_id = message.from_user.id
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                authority = await get_user_authority(user_id)
+                if authority < cost:
+                    await message.answer("❌ Недостаточно авторитета.")
+                    await state.clear()
+                    return
+                await update_user_authority(user_id, -cost, conn=conn)
+                await update_user_skill(user_id, f'skill_{skill}', delta=1, conn=conn)
+        await message.answer(f"✅ Навык успешно прокачан!", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        await state.clear()
+        await university_menu(message)
+    else:
+        await message.answer("Введи 'да' или 'нет'.")
+
+# ==================== МАГАЗИН ПОДАРКОВ ====================
+@dp.message(F.text == "🛒 Магазин")
+async def shop_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, name, description, price, stock FROM shop_items ORDER BY id")
+    if not rows:
+        await message.answer("🎁 В магазине пока нет подарков.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        return
+
+    text = "🎁 Доступные подарки:\n\n"
+    for row in rows:
+        stock_info = f" (в наличии: {row['stock']})" if row['stock'] != -1 else ""
+        text += f"ID {row['id']}: {row['name']}\n{row['description']}\n💰 {float(row['price']):.2f} MLB{stock_info}\n\n"
+    text += "Введи ID товара, который хочешь купить (или /cancel для отмены)."
+
+    await message.answer(text, reply_markup=back_keyboard())
+    await state.set_state(PurchaseItem.item_id)
+
+@dp.message(PurchaseItem.item_id, F.text)
+async def process_purchase_id(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
+        return
+    try:
+        item_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Введи число.")
+        return
+    user_id = message.from_user.id
+    try:
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1 FOR UPDATE", item_id)
+                if not row:
+                    await message.answer("❌ Товар с таким ID не найден.")
+                    return
+                name, price, stock = row['name'], float(row['price']), row['stock']
+                if stock != -1 and stock <= 0:
+                    await message.answer("❌ Товара нет в наличии!")
+                    return
+                balance = await get_user_balance(user_id)
+                if balance < price:
+                    await message.answer(f"❌ Не хватает MLB! Нужно {price:.2f}, у тебя {balance:.2f}")
+                    return
+                success, new_balance, _ = await update_user_balance(user_id, -price, conn=conn, allow_negative=False)
+                if not success:
+                    await message.answer("❌ Ошибка при списании средств.")
+                    return
+                await update_user_total_spent(user_id, price, conn=conn)
+                await conn.execute(
+                    "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
+                    user_id, item_id, datetime.now()
+                )
+                if stock != -1:
+                    await conn.execute("UPDATE shop_items SET stock = stock - 1 WHERE id=$1", item_id)
+        await message.answer(f"✅ Ты купил {name}! Ожидай подтверждения.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        
+        # Уведомление о крупной покупке
+        big_purchase_threshold = BIG_PURCHASE_THRESHOLD
+        if price >= big_purchase_threshold and await get_setting("chat_notify_big_purchase") == "1":
+            user_info = await get_user_name(user_id)
+            await notify_chats(f"🛍 {user_info} совершил крупную покупку: {name} за {price:.2f} MLB!")
+            
+        asyncio.create_task(notify_admins_about_purchase(message.from_user, name, price))
+    except Exception as e:
+        logging.exception("Ошибка при покупке")
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+    finally:
+        await state.clear()
+
+async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
+    admins = SUPER_ADMINS.copy()
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT user_id FROM admins")
+            admins.extend([r['user_id'] for r in rows])
+    except Exception as e:
+        logging.exception("Ошибка при получении списка админов")
+        return
+    text = f"🛍 Новая покупка!\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} MLB"
+    for admin_id in admins:
+        try:
+            await safe_send_message(admin_id, text)
+        except Exception as e:
+            logging.exception(f"Ошибка при отправке уведомления админу {admin_id}")
+
+# ==================== МОИ ПОКУПКИ ====================
+@dp.message(F.text == "💰 Мои покупки")
+async def my_purchases(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT p.id, s.name, p.purchase_date, p.status, p.admin_comment FROM purchases p "
+            "JOIN shop_items s ON p.item_id = s.id WHERE p.user_id=$1 ORDER BY p.purchase_date DESC",
+            user_id
+        )
+
+    if not rows:
+        await message.answer("У тебя пока нет покупок.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        return
+
+    text = "📦 Твои покупки:\n\n"
+    for row in rows:
+        status_emoji = "⏳" if row['status'] == 'pending' else "✅" if row['status'] == 'completed' else "❌"
+        date_str = row['purchase_date'].strftime("%Y-%m-%d %H:%M") if row['purchase_date'] else "неизвестно"
+        text += f"{status_emoji} {row['name']} от {date_str}\n"
+        if row['admin_comment']:
+            text += f"   Комментарий: {row['admin_comment']}\n"
+        text += "\n"
+
+    await message.answer(text, reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== ПРОМОКОД ====================
+@dp.message(F.text == "🎟 Промокод")
+async def promo_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await send_with_media(user_id, "Введи промокод:", media_key='promo', reply_markup=back_keyboard())
+    await PromoActivate.code.set()
+
+@dp.message(PromoActivate.code, F.text)
+async def promo_activate(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        await state.clear()
+        return
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
+        return
+    code = message.text.strip().upper()
+    user_id = message.from_user.id
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        await state.clear()
+        return
+    success, msg = await activate_promocode(user_id, code)
+    await message.answer(msg, reply_markup=main_menu_keyboard(await is_admin(user_id)))
+    await state.clear()
+
+# ==================== РЕФЕРАЛЬНАЯ ССЫЛКА ====================
+@dp.message(F.text == "🔗 Рефералка")
+async def referral_link(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    bot_username = (await bot.me()).username
+    link = f"https://t.me/{bot_username}?start=ref{user_id}"
+    bonus_coins = await get_setting_float("referral_bonus")
+    bonus_rep = await get_setting_int("referral_reputation")
+    required_thefts = await get_setting_int("referral_required_thefts")
+
+    async with db_pool.acquire() as conn:
+        clicks = await conn.fetchval("SELECT SUM(clicks) FROM referrals WHERE referrer_id=$1", user_id) or 0
+        active = await conn.fetchval("SELECT COUNT(*) FROM referrals WHERE referrer_id=$1 AND active=TRUE", user_id) or 0
+        earned = active * bonus_coins
+
+    text = (
+        f"🔗 Твоя реферальная ссылка:\n{link}\n\n"
+        f"📊 Статистика:\n"
+        f"• Переходов: {clicks}\n"
+        f"• Активных рефералов: {active}\n"
+        f"• Заработано MLB: {earned:.2f}\n\n"
+        f"Бонус: {bonus_coins:.2f} MLB и {bonus_rep} репутации за каждого активного реферала ({required_thefts} успешных краж)."
+    )
+    await send_with_media(user_id, text, media_key='referral', reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== ЗАДАНИЯ (С ИНЛАЙН-КНОПКАМИ) ====================
+@dp.message(F.text == "📋 Задания")
+async def tasks_user_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, name, description, reward_coins, reward_reputation, max_completions, completed_count, button_link FROM tasks WHERE active=TRUE")
+    if not rows:
+        await message.answer("📋 Пока нет доступных заданий.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        return
+
+    for row in rows:
+        text = f"📋 {row['name']}\n{row['description']}\nНаграда: {float(row['reward_coins']):.2f} MLB, {row['reward_reputation']} репутации"
+        if row['max_completions'] > 0:
+            text += f"\nОсталось мест: {row['max_completions'] - row['completed_count']}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Выполнить", callback_data=f"do_task_{row['id']}")]
+        ])
+        await message.answer(text, reply_markup=kb)
+    await message.answer("Выбери задание из списка выше.", reply_markup=back_keyboard())
+
+@dp.callback_query(F.data.startswith("do_task_"))
+async def do_task_callback(callback: CallbackQuery):
+    task_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    async with db_pool.acquire() as conn:
+        task = await conn.fetchrow("SELECT * FROM tasks WHERE id=$1 AND active=TRUE", task_id)
+        if not task:
+            await callback.answer("Задание не найдено", show_alert=True)
+            return
+        completed = await conn.fetchval("SELECT 1 FROM user_tasks WHERE user_id=$1 AND task_id=$2", user_id, task_id)
+        if completed:
+            await callback.answer("Ты уже выполнил это задание", show_alert=True)
+            return
+        if task['max_completions'] > 0 and task['completed_count'] >= task['max_completions']:
+            await callback.answer("Лимит выполнений исчерпан", show_alert=True)
+            return
+
+        if task['task_type'] == 'subscribe':
+            channel_id = task['target_id']
+            subscribed = await check_user_subscription(user_id, channel_id)
+            if not subscribed:
+                if task['button_link']:
+                    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📢 Перейти в канал", url=task['button_link'])]])
+                    await callback.message.answer("❌ Ты не подписан на этот канал! Подпишись и нажми кнопку ниже, чтобы проверить.", reply_markup=kb)
+                else:
+                    await callback.message.answer("❌ Ты не подписан на этот канал. Подпишись и попробуй снова.")
+                await callback.answer()
+                return
+            success, msg = await complete_task(user_id, task_id)
+            await callback.message.answer(msg)
+            await callback.answer()
+        else:
+            await callback.answer("Неподдерживаемый тип задания", show_alert=True)
+
+# ==================== ПОЛЬЗОВАТЕЛЬСКИЕ РОЗЫГРЫШИ ====================
+@dp.message(F.text == "🎁 Розыгрыши")
+async def user_giveaway_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Выбери раздел:", reply_markup=giveaways_user_keyboard())
+
+@dp.message(F.text == "📋 Активные розыгрыши")
+async def user_active_giveaways(message: Message):
+    user_id = message.from_user.id
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT id, prize, description, end_date, condition_type, min_participants
+            FROM giveaways WHERE status='active' ORDER BY end_date
+        """)
+        if not rows:
+            await message.answer("Нет активных розыгрышей.")
+            return
+        for row in rows:
+            text = f"🎁 #{row['id']}: {row['prize']}\n{row['description']}\n"
+            if row['condition_type'] == 'time':
+                text += f"⏰ Окончание: {row['end_date'].strftime('%d.%m.%Y %H:%M')}"
+            else:
+                count = await conn.fetchval("SELECT COUNT(*) FROM participants WHERE giveaway_id=$1", row['id'])
+                text += f"👥 Участников: {count} / {row['min_participants']}"
+            already = await conn.fetchval("SELECT 1 FROM participants WHERE user_id=$1 AND giveaway_id=$2", user_id, row['id'])
+            if already:
+                text += "\n✅ Вы уже участвуете"
+                await message.answer(text)
+            else:
+                kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Участвовать", callback_data=f"join_giveaway_{row['id']}")]])
+                await message.answer(text, reply_markup=kb)
+
+@dp.message(F.text == "🏁 Завершённые розыгрыши")
+async def user_completed_giveaways(message: Message):
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, prize, end_date FROM giveaways WHERE status='completed' ORDER BY end_date DESC LIMIT 10")
+        if not rows:
+            await message.answer("Нет завершённых розыгрышей.")
+            return
+        for row in rows:
+            text = f"🏁 #{row['id']}: {row['prize']}\nДата: {row['end_date'].strftime('%d.%m.%Y')}"
+            kb = completed_giveaway_detail_keyboard(row['id'])
+            await message.answer(text, reply_markup=kb)
+
+@dp.callback_query(F.data.startswith("view_completed_"))
+async def view_completed_giveaway(callback: CallbackQuery):
+    giveaway_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        giveaway = await conn.fetchrow("SELECT winners_list, prize FROM giveaways WHERE id=$1", giveaway_id)
+        if not giveaway or not giveaway['winners_list']:
+            await callback.answer("Нет информации о победителях", show_alert=True)
+            return
+        winners = json.loads(giveaway['winners_list'])
+        winner_names = []
+        for uid in winners:
+            user_info = await conn.fetchrow("SELECT username, first_name FROM users WHERE user_id=$1", uid)
+            if user_info and user_info['username']:
+                winner_names.append(f"@{user_info['username']}")
+            elif user_info:
+                winner_names.append(user_info['first_name'])
+            else:
+                winner_names.append(f"ID{uid}")
+        text = f"🎁 Розыгрыш #{giveaway_id}: {giveaway['prize']}\n\nПобедители:\n" + "\n".join(winner_names)
+    await callback.message.answer(text)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("join_giveaway_"))
+async def join_giveaway(callback: CallbackQuery):
+    giveaway_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            giveaway = await conn.fetchrow("SELECT status FROM giveaways WHERE id=$1 FOR UPDATE", giveaway_id)
+            if not giveaway or giveaway['status'] != 'active':
+                await callback.answer("❌ Розыгрыш уже завершён.", show_alert=True)
+                return
+            existing = await conn.fetchval("SELECT 1 FROM participants WHERE user_id=$1 AND giveaway_id=$2", user_id, giveaway_id)
+            if existing:
+                await callback.answer("❌ Вы уже участвуете.", show_alert=True)
+                return
+            await conn.execute("INSERT INTO participants (user_id, giveaway_id) VALUES ($1, $2)", user_id, giveaway_id)
+    await callback.answer("✅ Вы участвуете в розыгрыше!")
+    await callback.message.edit_reply_markup(reply_markup=None)
+
+# ==================== БИТКОИН-БИРЖА (ПОЛЬЗОВАТЕЛЬСКАЯ ЧАСТЬ) ====================
+@dp.message(F.text == "💼 Биткоин-биржа")
+async def bitcoin_exchange_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await send_with_media(user_id, "Выбери действие:", media_key='exchange', reply_markup=bitcoin_exchange_keyboard())
+
+@dp.message(F.text == "📈 Купить BTC")
+async def buy_bitcoin_start(message: Message, state: FSMContext):
+    await message.answer("Введи количество BTC, которое хочешь купить (например, 0.1):", reply_markup=back_keyboard())
+    await state.set_state(BuyBitcoin.amount)
+
+@dp.message(BuyBitcoin.amount, F.text)
+async def buy_bitcoin_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await bitcoin_exchange_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 4)
+        min_amount = await get_setting_float("exchange_min_amount_btc")
+        if amount < min_amount:
+            await message.answer(f"❌ Минимальное количество для заявки: {min_amount:.4f} BTC.")
+            return
+    except:
+        await message.answer("❌ Введи положительное число (можно дробное).")
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    min_price = await get_setting_int("exchange_min_price")
+    min_cost = amount * min_price
+    if balance < min_cost:
+        await message.answer(f"❌ У тебя недостаточно MLB даже для минимальной цены. Нужно минимум {min_cost:.2f} MLB.")
+        return
+    await state.update_data(amount=amount)
+    await message.answer("Введи цену за 1 BTC в MLB (целое число):")
+    await state.set_state(BuyBitcoin.price)
+
+@dp.message(BuyBitcoin.price, F.text)
+async def buy_bitcoin_price(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await bitcoin_exchange_menu(message)
+        return
+    try:
+        price = int(message.text)
+        min_price = await get_setting_int("exchange_min_price")
+        max_price = await get_setting_int("exchange_max_price")
+        if price < min_price or (max_price > 0 and price > max_price):
+            await message.answer(f"❌ Цена должна быть от {min_price} до {max_price if max_price>0 else '∞'} MLB.")
+            return
+    except:
+        await message.answer("❌ Введи целое число.")
+        return
+    data = await state.get_data()
+    amount = data['amount']
+    user_id = message.from_user.id
+    total_cost = amount * price
+    balance = await get_user_balance(user_id)
+    if balance < total_cost:
+        await message.answer(f"❌ Недостаточно MLB. Нужно {total_cost:.2f}, у тебя {balance:.2f}.")
+        return
+    try:
+        order_id = await create_bitcoin_order(user_id, 'buy', amount, price)
+        await message.answer(
+            f"✅ Заявка на покупку {amount:.4f} BTC по цене {price} MLB создана!\n"
+            f"ID заявки: {order_id}\n"
+            f"Зарезервировано {total_cost:.2f} MLB.",
+            reply_markup=bitcoin_exchange_keyboard()
+        )
+    except ValueError as e:
+        await message.answer(f"❌ {e}")
+    except Exception as e:
+        logging.exception("Ошибка при создании заявки на покупку")
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуй позже.")
+    finally:
+        await state.clear()
+
+@dp.message(F.text == "📉 Продать BTC")
+async def sell_bitcoin_start(message: Message, state: FSMContext):
+    await message.answer("Введи количество BTC, которое хочешь продать:", reply_markup=back_keyboard())
+    await state.set_state(SellBitcoin.amount)
+
+@dp.message(SellBitcoin.amount, F.text)
+async def sell_bitcoin_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await bitcoin_exchange_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 4)
+        min_amount = await get_setting_float("exchange_min_amount_btc")
+        if amount < min_amount:
+            await message.answer(f"❌ Минимальное количество для заявки: {min_amount:.4f} BTC.")
+            return
+    except:
+        await message.answer("❌ Введи положительное число (можно дробное).")
+        return
+    user_id = message.from_user.id
+    btc_balance = await get_user_bitcoin(user_id)
+    if btc_balance < amount:
+        await message.answer(f"❌ У тебя недостаточно BTC. На балансе {btc_balance:.4f} BTC.")
+        return
+    await state.update_data(amount=amount)
+    await message.answer("Введи цену за 1 BTC в MLB (целое число):")
+    await state.set_state(SellBitcoin.price)
+
+@dp.message(SellBitcoin.price, F.text)
+async def sell_bitcoin_price(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await bitcoin_exchange_menu(message)
+        return
+    try:
+        price = int(message.text)
+        min_price = await get_setting_int("exchange_min_price")
+        max_price = await get_setting_int("exchange_max_price")
+        if price < min_price or (max_price > 0 and price > max_price):
+            await message.answer(f"❌ Цена должна быть от {min_price} до {max_price if max_price>0 else '∞'} MLB.")
+            return
+    except:
+        await message.answer("❌ Введи целое число.")
+        return
+    data = await state.get_data()
+    amount = data['amount']
+    user_id = message.from_user.id
+    btc_balance = await get_user_bitcoin(user_id)
+    if btc_balance < amount:
+        await message.answer(f"❌ Недостаточно BTC. На балансе {btc_balance:.4f} BTC.")
+        return
+    try:
+        order_id = await create_bitcoin_order(user_id, 'sell', amount, price)
+        await message.answer(
+            f"✅ Заявка на продажу {amount:.4f} BTC по цене {price} MLB создана!\n"
+            f"ID заявки: {order_id}\n"
+            f"Зарезервировано {amount:.4f} BTC.",
+            reply_markup=bitcoin_exchange_keyboard()
+        )
+    except ValueError as e:
+        await message.answer(f"❌ {e}")
+    except Exception as e:
+        logging.exception("Ошибка при создании заявки на продажу")
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуй позже.")
+    finally:
+        await state.clear()
+
+@dp.message(F.text == "📋 Мои заявки")
+async def my_orders(message: Message):
+    user_id = message.from_user.id
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, type, amount, price, created_at FROM bitcoin_orders "
+            "WHERE user_id=$1 AND status='active' ORDER BY created_at DESC",
+            user_id
+        )
+    if not rows:
+        await message.answer("У тебя нет активных заявок.", reply_markup=bitcoin_exchange_keyboard())
+        return
+    for row in rows:
+        side = "📈 покупка" if row['type'] == 'buy' else "📉 продажа"
+        created = row['created_at'].strftime("%d.%m %H:%M")
+        text = f"🆔 {row['id']} | {side}\n{float(row['amount']):.4f} BTC @ {row['price']} MLB\nСоздано: {created}"
+        kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_order_{row['id']}")]])
+        await message.answer(text, reply_markup=kb)
+    await message.answer("Чтобы вернуться, нажми «Назад».", reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="◀️ Назад")]], resize_keyboard=True))
+
+@dp.callback_query(F.data.startswith("cancel_order_"))
+async def cancel_order_callback(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    user_id = callback.from_user.id
+    success = await cancel_bitcoin_order(order_id, user_id)
+    if success:
+        await callback.answer("✅ Заявка отменена")
+        await callback.message.edit_text(callback.message.text + "\n\n✅ Заявка отменена.")
+    else:
+        await callback.answer("❌ Не удалось отменить заявку (возможно, она уже не активна)", show_alert=True)
+
+@dp.message(F.text == "📊 Стакан заявок")
+async def order_book(message: Message):
+    book = await get_order_book()
+    text = "📊 Стакан заявок:\n\n"
+    text += "💰 Покупка (Bid):\n"
+    for bid in book['bids'][:10]:
+        text += f"{bid['price']} MLB – {bid['total_amount']:.4f} BTC ({bid['count']} заяв.)\n"
+    text += "\n💸 Продажа (Ask):\n"
+    for ask in book['asks'][:10]:
+        text += f"{ask['price']} MLB – {ask['total_amount']:.4f} BTC ({ask['count']} заяв.)\n"
+    if not book['bids'] and not book['asks']:
+        text += "Стакан пуст.\n"
+    await message.answer(text, reply_markup=bitcoin_exchange_keyboard())
+
+@dp.message(F.text == "◀️ Назад", StateFilter(None))
+async def back_to_exchange_from_orders(message: Message):
+    await bitcoin_exchange_menu(message)
+
+# ==================== ОГРАБЛЕНИЯ ====================
+@dp.message(F.text == "🔫 Ограбить")
+async def theft_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Выбери цель для ограбления:", reply_markup=theft_choice_keyboard())
+
+@dp.message(F.text == "🎲 Случайная цель")
+async def theft_random(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    cooldown = await get_setting_int("theft_cooldown_minutes") * 60
+    ok, remaining = await check_global_cooldown(user_id, "theft", cooldown)
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {format_time_remaining(remaining)} перед следующим ограблением.")
+        return
+    cost = await get_setting_float("random_attack_cost")
+    if cost > 0:
+        balance = await get_user_balance(user_id)
+        if balance < cost:
+            await message.answer(f"❌ Недостаточно MLB для оплаты ограбления. Нужно {cost:.2f} MLB.")
+            return
+        await update_user_balance(user_id, -cost, allow_negative=False)
+    async with db_pool.acquire() as conn:
+        admins = await conn.fetch("SELECT user_id FROM admins")
+        admin_ids = [r['user_id'] for r in admins] + SUPER_ADMINS + [bot.id]
+        target_row = await conn.fetchrow("""
+            SELECT user_id FROM users
+            WHERE user_id != $1
+              AND user_id NOT IN (SELECT user_id FROM banned_users)
+              AND user_id != ALL($2::bigint[])
+            ORDER BY random() LIMIT 1
+        """, user_id, admin_ids)
+        if not target_row:
+            await message.answer("❌ Нет подходящих целей для ограбления.")
+            return
+        target_id = target_row['user_id']
+    await perform_theft(message, user_id, target_id, state)
+
+@dp.message(F.text == "👤 Выбрать пользователя")
+async def theft_target_input(message: Message, state: FSMContext):
+    await message.answer("Введи ID или @username пользователя:", reply_markup=back_keyboard())
+    await state.set_state(TheftTarget.target)
+
+@dp.message(TheftTarget.target, F.text)
+async def theft_target_process(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await theft_menu(message)
+        return
+    target_data = await find_user_by_input(message.text)
+    if not target_data:
+        await message.answer("❌ Пользователь не найден.")
+        return
+    target_id = target_data['user_id']
+    user_id = message.from_user.id
+    if target_id == user_id:
+        await message.answer("❌ Нельзя грабить самого себя.")
+        return
+    if await is_admin(target_id):
+        await message.answer("❌ Нельзя грабить администратора.")
+        return
+    if await is_banned(target_id):
+        await message.answer("❌ Этот пользователь забанен.")
+        return
+    cooldown = await get_setting_int("theft_cooldown_minutes") * 60
+    ok, remaining = await check_global_cooldown(user_id, "theft", cooldown)
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {format_time_remaining(remaining)} перед следующим ограблением.")
+        return
+    cost = await get_setting_float("targeted_attack_cost")
+    if cost > 0:
+        balance = await get_user_balance(user_id)
+        if balance < cost:
+            await message.answer(f"❌ Недостаточно MLB для оплаты ограбления. Нужно {cost:.2f} MLB.")
+            return
+        await update_user_balance(user_id, -cost, allow_negative=False)
+    await perform_theft(message, user_id, target_id, state)
+
+async def perform_theft(message: Message, attacker_id: int, victim_id: int, state: FSMContext):
+    success_chance = await get_theft_success_chance(attacker_id)
+    defense_chance = await get_defense_chance(victim_id)
+    rand = random.randint(1, 100)
+    if rand <= success_chance:
+        min_amount = await get_setting_int("min_theft_amount")
+        max_amount = await get_setting_int("max_theft_amount")
+        amount = random.randint(min_amount, max_amount)
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                success, new_balance, _ = await update_user_balance(victim_id, -amount, conn=conn, allow_negative=True)
+                if not success:
+                    await message.answer("❌ Ошибка при краже.")
+                    return
+                await update_user_balance(attacker_id, amount, conn=conn, allow_negative=False)
+                await conn.execute("UPDATE users SET theft_success = theft_success + 1 WHERE user_id=$1", attacker_id)
+                await conn.execute("UPDATE users SET theft_failed = theft_failed + 1 WHERE user_id=$1", victim_id)
+                exp = await get_setting_int("exp_per_theft_success")
+                level_up_msg = await add_exp(attacker_id, exp, conn=conn)
+        await set_global_cooldown(attacker_id, "theft", await get_setting_int("theft_cooldown_minutes") * 60)
+        victim_name = await get_user_name(victim_id)
+        await message.answer(f"✅ Ты успешно ограбил {victim_name} и украл {amount} MLB!")
+        if level_up_msg:
+            await safe_send_message(attacker_id, level_up_msg)
+    elif rand <= success_chance + defense_chance:
+        penalty = await get_setting_int("theft_defense_penalty")
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                await update_user_balance(attacker_id, -penalty, conn=conn, allow_negative=True)
+                await conn.execute("UPDATE users SET theft_protected = theft_protected + 1 WHERE user_id=$1", victim_id)
+                await conn.execute("UPDATE users SET theft_failed = theft_failed + 1 WHERE user_id=$1", attacker_id)
+                exp = await get_setting_int("exp_per_theft_defense")
+                await add_exp(victim_id, exp, conn=conn)
+        await set_global_cooldown(attacker_id, "theft", await get_setting_int("theft_cooldown_minutes") * 60)
+        victim_name = await get_user_name(victim_id)
+        await message.answer(f"🛡 {victim_name} защитился! Ты потерял {penalty} MLB.")
+    else:
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE users SET theft_failed = theft_failed + 1 WHERE user_id=$1", attacker_id)
+            exp = await get_setting_int("exp_per_theft_fail")
+            await add_exp(attacker_id, exp, conn=conn)
+        await set_global_cooldown(attacker_id, "theft", await get_setting_int("theft_cooldown_minutes") * 60)
+        await message.answer("❌ Твоя попытка ограбления провалилась.")
+    await state.clear()
+
+# ==================== ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ ДЛЯ ФАРМОВ ====================
+@dp.message(F.text == "🏪 Фарм")
+async def my_businesses_handler(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    businesses = await get_user_businesses(user_id)
+    if not businesses:
+        # Если нет фармов, предложить купить
+        biz_types = await get_business_type_list(only_available=True)
+        if biz_types:
+            text = "🏪 У вас пока нет фармов. Выберите для покупки:\n\n"
+            for bt in biz_types:
+                text += f"{bt['emoji']} {bt['name']} – {bt['base_price_btc']} BTC\n"
+                text += f"   Доход: {bt['base_income_per_hour']} MLB/час\n\n"
+            await message.answer(text, reply_markup=business_buy_keyboard(biz_types))
+        else:
+            await message.answer("🏪 Фармы временно недоступны.")
+        return
+
+    await message.answer("🏪 Ваши фармы:", reply_markup=business_main_keyboard(businesses))
+
+@dp.message(F.text.regexp(r"^(🥤|🏪|🏬|🍽️|🏨|🛢️) .+ \(ур\. \d+\)$"))
+async def select_business_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    # Сохраняем название выбранного фарма
+    await state.update_data(selected_business_name=message.text)
+    await message.answer(f"Выбрано: {message.text}", reply_markup=business_actions_keyboard())
+
+@dp.message(F.text == "🛒 Купить новый фарм")
+async def buy_business_start(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    biz_types = await get_business_type_list(only_available=True)
+    if not biz_types:
+        await message.answer("❌ Нет доступных фармов для покупки.")
+        return
+
+    text = "🛒 Доступные фармы:\n\n"
+    for bt in biz_types:
+        text += f"{bt['emoji']} {bt['name']}\n"
+        text += f"💰 {bt['base_price_btc']} BTC\n"
+        text += f"📈 Доход: {bt['base_income_per_hour']} MLB/час\n"
+        text += f"📝 {bt['description']}\n\n"
+
+    await message.answer(text, reply_markup=business_buy_keyboard(biz_types))
+    await state.set_state(BuyBusiness.business_type_id)
+
+@dp.message(BuyBusiness.business_type_id, F.text)
+async def buy_business_confirm(message: Message, state: FSMContext):
+    if message.text == "◀️ Отмена":
+        await state.clear()
+        await my_businesses_handler(message)
+        return
+
+    # Парсим название выбранного бизнеса
+    text = message.text
+    import re
+    match = re.match(r"^(🥤|🏪|🏬|🍽️|🏨|🛢️) (.+) – (\d+(?:\.\d+)?) BTC$", text)
+    if not match:
+        await message.answer("❌ Неверный формат. Выберите из списка.")
+        return
+
+    emoji, name, price_str = match.groups()
+    price = float(price_str)
+
+    biz_types = await get_business_type_list(only_available=True)
+    biz = next((b for b in biz_types if b['emoji'] == emoji and b['name'] == name), None)
+    if not biz:
+        await message.answer("❌ Бизнес не найден.")
+        return
+
+    user_id = message.from_user.id
+
+    max_biz = await get_setting_int("business_max_businesses")
+    if max_biz > 0:
+        current_biz = await get_user_businesses(user_id)
+        if len(current_biz) >= max_biz:
+            await message.answer(f"❌ Вы не можете купить больше {max_biz} фармов.")
+            return
+
+    btc_balance = await get_user_bitcoin(user_id)
+    if btc_balance < price:
+        await message.answer(f"❌ Недостаточно BTC. Нужно {price:.2f}, у вас {btc_balance:.4f}.")
+        return
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_btc = await update_user_bitcoin(user_id, -price, conn=conn)
+            if not success:
+                await message.answer("❌ Ошибка при списании BTC.")
+                return
+
+            lifetime = await get_setting_int("business_lifetime_hours_default")
+            await create_user_business(user_id, biz['id'], lifetime, conn=conn)
+            
+            # Уведомление о крупной покупке бизнеса
+            big_business_threshold = await get_setting_float("big_business_threshold_btc")
+            if price >= big_business_threshold and await get_setting("chat_notify_big_business") == "1":
+                user_info = await get_user_name(user_id)
+                await notify_chats(f"🏪 {user_info} приобрёл крупный бизнес: {biz['emoji']} {biz['name']} за {price:.2f} BTC!")
+
+    await message.answer(f"✅ Вы купили {biz['emoji']} {biz['name']} за {price:.2f} BTC!")
+    await state.clear()
+    await my_businesses_handler(message)
+
+@dp.message(F.text == "💰 Собрать доход")
+async def collect_business_income_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    data = await state.get_data()
+    business_name = data.get('selected_business_name')
+    if not business_name:
+        await message.answer("❌ Сначала выберите фарм.")
+        return
+
+    user_id = message.from_user.id
+    businesses = await get_user_businesses(user_id)
+    selected = None
+    for biz in businesses:
+        if f"{biz['emoji']} {biz['name']} (ур. {biz['level']})" == business_name:
+            selected = biz
+            break
+
+    if not selected:
+        await message.answer("❌ Фарм не найден.")
+        return
+
+    success, msg, amount = await collect_business_income(user_id, selected['id'])
+    await message.answer(msg)
+
+@dp.message(F.text == "⬆️ Улучшить")
+async def upgrade_business_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    data = await state.get_data()
+    business_name = data.get('selected_business_name')
+    if not business_name:
+        await message.answer("❌ Сначала выберите фарм.")
+        return
+
+    user_id = message.from_user.id
+    businesses = await get_user_businesses(user_id)
+    selected = None
+    for biz in businesses:
+        if f"{biz['emoji']} {biz['name']} (ур. {biz['level']})" == business_name:
+            selected = biz
+            break
+
+    if not selected:
+        await message.answer("❌ Фарм не найден.")
+        return
+
+    cost = await get_business_price(selected, selected['level'] + 1)
+    await message.answer(
+        f"Улучшение {selected['emoji']} {selected['name']} до уровня {selected['level']+1} "
+        f"будет стоить {cost:.2f} BTC. Подтвердить? (да/нет)",
+        reply_markup=back_keyboard()
+    )
+    await state.update_data(business_id=selected['id'], cost=cost)
+    await state.set_state(UpgradeBusiness.confirming)
+
+@dp.message(UpgradeBusiness.confirming, F.text)
+async def upgrade_business_confirm(message: Message, state: FSMContext):
+    if message.text.lower() == 'нет' or message.text == "◀️ Назад":
+        await state.clear()
+        await my_businesses_handler(message)
+        return
+    if message.text.lower() == 'да':
+        data = await state.get_data()
+        business_id = data['business_id']
+        cost = data['cost']
+        user_id = message.from_user.id
+
+        btc_balance = await get_user_bitcoin(user_id)
+        if btc_balance < cost:
+            await message.answer(f"❌ Недостаточно BTC. Нужно {cost:.2f}, у вас {btc_balance:.4f}.")
+            await state.clear()
+            return
+
+        success, msg = await upgrade_business(user_id, business_id)
+        await message.answer(msg)
+        await state.clear()
+        await my_businesses_handler(message)
+    else:
+        await message.answer("Введи 'да' или 'нет'.")
+
+@dp.message(F.text == "◀️ Назад к списку фармов")
+async def back_to_business_list(message: Message, state: FSMContext):
+    await state.clear()
+    await my_businesses_handler(message)
+
+# ==================== КОНЕЦ ЧАСТИ 4 ====================
