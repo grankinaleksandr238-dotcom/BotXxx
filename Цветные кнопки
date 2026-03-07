@@ -6555,3 +6555,613 @@ async def my_bets(message: Message):
     await message.answer(text)
 
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
+# ==================== ЧАСТЬ 4: АДМИНИСТРИРОВАНИЕ ПОДПОЛЬНЫХ БОЁВ, РЕФЕРАЛЬНЫЙ ТОП, СТАТИСТИКА ЧАТОВ ====================
+
+# Внимание: этот код предполагает, что все импорты из Части 1 уже выполнены,
+# а также что в Части 2 добавлены новые состояния и клавиатуры (AddFighter, CreateFight и т.д.).
+# Здесь определяются хендлеры для администраторов и новые фоновые задачи.
+
+import logging
+import random
+import asyncio
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Tuple
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ БОЁВ (дублируются из Части 3 для целостности) ====================
+
+async def get_fighter(fighter_id: int) -> Optional[Dict]:
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM fighters WHERE id=$1", fighter_id)
+        return dict(row) if row else None
+
+async def get_fighters() -> List[Dict]:
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM fighters WHERE active=TRUE ORDER BY name")
+        return [dict(r) for r in rows]
+
+async def get_fight(fight_id: int) -> Optional[Dict]:
+    async with db_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM fights WHERE id=$1", fight_id)
+        return dict(row) if row else None
+
+# ==================== АДМИНИСТРИРОВАНИЕ БОЙЦОВ ====================
+
+@dp.message(F.text == "🥊 Управление боями")
+async def admin_fights_main(message: Message):
+    """Главное меню управления подпольными боями для админов."""
+    if not await check_admin_permissions(message.from_user.id, "manage_businesses"):  # используем существующее право
+        await message.answer("❌ Недостаточно прав.")
+        return
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🥊 Бойцы"), KeyboardButton(text="🥊 Бои")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer("Управление подпольными боями:", reply_markup=kb)
+
+@dp.message(F.text == "🥊 Бойцы")
+async def admin_fighters_list(message: Message):
+    """Список бойцов с возможностью редактирования."""
+    if not await check_admin_permissions(message.from_user.id, "manage_businesses"):
+        return
+    fighters = await get_fighters()
+    if not fighters:
+        await message.answer("Нет бойцов. Добавь первого!", reply_markup=admin_fighters_keyboard([]))
+        return
+    await message.answer("Список бойцов:", reply_markup=admin_fighters_keyboard(fighters))
+
+@dp.callback_query(F.data == "add_fighter")
+async def add_fighter_start(callback: CallbackQuery, state: FSMContext):
+    """Начало добавления нового бойца."""
+    await callback.answer()
+    await callback.message.answer("Введи имя бойца (например, 'Мясник Боб'):", reply_markup=back_keyboard())
+    await state.set_state(AddFighter.name)
+
+@dp.message(AddFighter.name, F.text)
+async def add_fighter_name(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_fighters_list(message)
+        return
+    await state.update_data(name=message.text)
+    await message.answer("Введи эмодзи для бойца (один символ, например 🥩):")
+    await state.set_state(AddFighter.emoji)
+
+@dp.message(AddFighter.emoji, F.text)
+async def add_fighter_emoji(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_fighters_list(message)
+        return
+    await state.update_data(emoji=message.text)
+    await message.answer("Введи описание бойца (например, 'Бывший мясник, рубит с плеча'):")
+    await state.set_state(AddFighter.description)
+
+@dp.message(AddFighter.description, F.text)
+async def add_fighter_description(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_fighters_list(message)
+        return
+    await state.update_data(description=message.text)
+    await message.answer("Введи ключ картинки для бойца (например, 'fighter_butcher') или '-' если без картинки:")
+    await state.set_state(AddFighter.image_key)
+
+@dp.message(AddFighter.image_key, F.text)
+async def add_fighter_image_key(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_fighters_list(message)
+        return
+    image_key = None if message.text == '-' else message.text.strip()
+    await state.update_data(image_key=image_key)
+    data = await state.get_data()
+    text = (
+        f"Проверь данные бойца:\n"
+        f"Имя: {data['name']}\n"
+        f"Эмодзи: {data['emoji']}\n"
+        f"Описание: {data['description']}\n"
+        f"Ключ картинки: {image_key}\n\n"
+        f"Подтвердить добавление?"
+    )
+    await message.answer(text, reply_markup=fight_confirm_keyboard())
+    await state.set_state(AddFighter.confirm)
+
+@dp.callback_query(AddFighter.confirm, F.data.startswith("fight_confirm_"))
+async def add_fighter_confirm(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split("_")[2]
+    if action == "no":
+        await callback.message.edit_text("❌ Добавление отменено.")
+        await state.clear()
+        await callback.answer()
+        return
+    data = await state.get_data()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO fighters (name, emoji, description, image_key) VALUES ($1, $2, $3, $4)",
+            data['name'], data['emoji'], data['description'], data['image_key']
+        )
+    await callback.message.edit_text(f"✅ Боец {data['emoji']} {data['name']} добавлен!")
+    await state.clear()
+    await admin_fighters_list(callback.message)
+
+@dp.callback_query(F.data.startswith("edit_fighter_"))
+async def edit_fighter_start(callback: CallbackQuery, state: FSMContext):
+    fighter_id = int(callback.data.split("_")[2])
+    fighter = await get_fighter(fighter_id)
+    if not fighter:
+        await callback.answer("❌ Боец не найден.", show_alert=True)
+        return
+    await state.update_data(fighter_id=fighter_id)
+    text = (
+        f"{fighter['emoji']} {fighter['name']}\n"
+        f"Описание: {fighter['description']}\n"
+        f"Статистика: {fighter['wins']} побед, {fighter['losses']} поражений, {fighter['draws']} ничьих\n\n"
+        f"Что хочешь изменить?"
+    )
+    await callback.message.edit_text(text, reply_markup=fighter_edit_fields_keyboard(fighter_id))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("fighter_edit_"))
+async def edit_fighter_field(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    field = parts[2]  # name, emoji, desc, image
+    fighter_id = int(parts[3])
+    await state.update_data(fighter_id=fighter_id, field=field)
+    prompts = {
+        "name": "Введи новое имя:",
+        "emoji": "Введи новый эмодзи:",
+        "desc": "Введи новое описание:",
+        "image": "Введи новый ключ картинки (или '-'):"
+    }
+    await callback.message.edit_text(prompts[field])
+    await state.set_state(EditFighter.value)
+    await callback.answer()
+
+@dp.message(EditFighter.value, F.text)
+async def edit_fighter_value(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await admin_fighters_list(message)
+        return
+    data = await state.get_data()
+    fighter_id = data['fighter_id']
+    field = data['field']
+    value = message.text.strip() if message.text != '-' else None
+
+    column_map = {
+        "name": "name",
+        "emoji": "emoji",
+        "desc": "description",
+        "image": "image_key"
+    }
+    db_column = column_map[field]
+
+    async with db_pool.acquire() as conn:
+        await conn.execute(f"UPDATE fighters SET {db_column}=$1 WHERE id=$2", value, fighter_id)
+
+    await message.answer("✅ Обновлено.")
+    await state.clear()
+    await admin_fighters_list(message)
+
+@dp.callback_query(F.data.startswith("fighter_delete_"))
+async def delete_fighter(callback: CallbackQuery, state: FSMContext):
+    fighter_id = int(callback.data.split("_")[2])
+    # Проверим, не участвует ли боец в активных боях
+    async with db_pool.acquire() as conn:
+        active = await conn.fetchval(
+            "SELECT 1 FROM fights WHERE (fighter1_id=$1 OR fighter2_id=$1) AND status='scheduled'",
+            fighter_id
+        )
+        if active:
+            await callback.answer("❌ Нельзя удалить бойца, участвующего в активном бою.", show_alert=True)
+            return
+        await conn.execute("DELETE FROM fighters WHERE id=$1", fighter_id)
+    await callback.answer("✅ Боец удалён.")
+    await admin_fighters_list(callback.message)
+
+# ==================== АДМИНИСТРИРОВАНИЕ БОЁВ ====================
+
+@dp.message(F.text == "🥊 Бои")
+async def admin_fights_list(message: Message):
+    """Список боёв (активные и запланированные)."""
+    if not await check_admin_permissions(message.from_user.id, "manage_businesses"):
+        return
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT f.*, f1.name as fighter1_name, f1.emoji as fighter1_emoji,
+                   f2.name as fighter2_name, f2.emoji as fighter2_emoji
+            FROM fights f
+            JOIN fighters f1 ON f.fighter1_id = f1.id
+            JOIN fighters f2 ON f.fighter2_id = f2.id
+            WHERE f.status = 'scheduled'
+            ORDER BY f.start_time
+        """)
+    if not rows:
+        await message.answer("Нет запланированных боёв.", reply_markup=admin_fights_list_keyboard([]))
+        return
+    fights = [dict(r) for r in rows]
+    await message.answer("Запланированные бои:", reply_markup=admin_fights_list_keyboard(fights))
+
+@dp.callback_query(F.data == "create_fight")
+async def create_fight_start(callback: CallbackQuery, state: FSMContext):
+    """Начало создания боя."""
+    fighters = await get_fighters()
+    if len(fighters) < 2:
+        await callback.answer("❌ Нужно хотя бы два бойца.", show_alert=True)
+        return
+    # Покажем список для выбора первого бойца
+    kb = fighters_keyboard(fighters)  # используем ту же клавиатуру, что для ставок
+    await callback.message.edit_text("Выбери первого бойца:", reply_markup=kb)
+    await state.set_state(CreateFight.fighter1_id)
+    await callback.answer()
+
+@dp.callback_query(CreateFight.fighter1_id, F.data.startswith("fight_fighter_"))
+async def create_fight_fighter1(callback: CallbackQuery, state: FSMContext):
+    fighter1_id = int(callback.data.split("_")[2])
+    await state.update_data(fighter1_id=fighter1_id)
+    fighters = await get_fighters()
+    # Убираем выбранного из списка
+    fighters = [f for f in fighters if f['id'] != fighter1_id]
+    if not fighters:
+        await callback.answer("❌ Нет других бойцов.", show_alert=True)
+        return
+    kb = fighters_keyboard(fighters)
+    await callback.message.edit_text("Выбери второго бойца:", reply_markup=kb)
+    await state.set_state(CreateFight.fighter2_id)
+    await callback.answer()
+
+@dp.callback_query(CreateFight.fighter2_id, F.data.startswith("fight_fighter_"))
+async def create_fight_fighter2(callback: CallbackQuery, state: FSMContext):
+    fighter2_id = int(callback.data.split("_")[2])
+    await state.update_data(fighter2_id=fighter2_id)
+    await callback.message.edit_text("Через сколько минут начнётся бой? (введи число):")
+    await state.set_state(CreateFight.start_delay_minutes)
+    await callback.answer()
+
+@dp.message(CreateFight.start_delay_minutes, F.text)
+async def create_fight_delay(message: Message, state: FSMContext):
+    try:
+        delay = int(message.text)
+        if delay <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❌ Введи положительное целое число.")
+        return
+    data = await state.get_data()
+    fighter1 = await get_fighter(data['fighter1_id'])
+    fighter2 = await get_fighter(data['fighter2_id'])
+    start_time = datetime.now() + timedelta(minutes=delay)
+    # Время окончания боя = время начала + длительность боя (берём из настроек)
+    fight_duration = await get_setting_int("fight_result_delay_seconds")  # в секундах
+    end_time = start_time + timedelta(seconds=fight_duration)
+
+    text = (
+        f"📅 Создание боя:\n"
+        f"{fighter1['emoji']} {fighter1['name']} VS {fighter2['emoji']} {fighter2['name']}\n"
+        f"Начало через {delay} мин.\n\n"
+        f"Подтверждаешь?"
+    )
+    await message.answer(text, reply_markup=fight_confirm_keyboard())
+    await state.update_data(start_time=start_time, end_time=end_time)
+    await state.set_state(CreateFight.confirm)
+
+@dp.callback_query(CreateFight.confirm, F.data.startswith("fight_confirm_"))
+async def create_fight_confirm(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split("_")[2]
+    if action == "no":
+        await callback.message.edit_text("❌ Создание боя отменено.")
+        await state.clear()
+        await callback.answer()
+        return
+    data = await state.get_data()
+    async with db_pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO fights (fighter1_id, fighter2_id, start_time, end_time, status) VALUES ($1, $2, $3, $4, $5)",
+            data['fighter1_id'], data['fighter2_id'], data['start_time'], data['end_time'], 'scheduled'
+        )
+    await callback.message.edit_text("✅ Бой создан!")
+    await state.clear()
+    await admin_fights_list(callback.message)
+
+@dp.callback_query(F.data.startswith("admin_fight_"))
+async def admin_fight_detail(callback: CallbackQuery):
+    fight_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        fight = await conn.fetchrow("""
+            SELECT f.*, f1.name as fighter1_name, f1.emoji as fighter1_emoji,
+                   f2.name as fighter2_name, f2.emoji as fighter2_emoji
+            FROM fights f
+            JOIN fighters f1 ON f.fighter1_id = f1.id
+            JOIN fighters f2 ON f.fighter2_id = f2.id
+            WHERE f.id=$1
+        """, fight_id)
+    if not fight:
+        await callback.answer("❌ Бой не найден.", show_alert=True)
+        return
+    f = dict(fight)
+    text = (
+        f"Бой #{f['id']}: {f['fighter1_emoji']} {f['fighter1_name']} vs {f['fighter2_emoji']} {f['fighter2_name']}\n"
+        f"Статус: {f['status']}\n"
+        f"Начало: {f['start_time'].strftime('%d.%m.%Y %H:%M')}\n"
+        f"Окончание: {f['end_time'].strftime('%d.%m.%Y %H:%M')}\n"
+        f"Всего ставок: {float(f['total_bets_mlb']):.2f} MLB\n"
+    )
+    if f['status'] == 'scheduled':
+        # Кнопка для принудительного завершения
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🏁 Завершить бой", callback_data=f"end_fight_{fight_id}")]
+        ])
+    else:
+        kb = None
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("end_fight_"))
+async def end_fight_start(callback: CallbackQuery, state: FSMContext):
+    fight_id = int(callback.data.split("_")[2])
+    async with db_pool.acquire() as conn:
+        fight = await conn.fetchrow("SELECT * FROM fights WHERE id=$1 AND status='scheduled'", fight_id)
+        if not fight:
+            await callback.answer("❌ Бой не найден или уже завершён.", show_alert=True)
+            return
+    await state.update_data(fight_id=fight_id)
+    await callback.message.edit_text("Выбери результат:", reply_markup=fight_result_keyboard(fight_id))
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("fight_result_"))
+async def end_fight_result(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    result = parts[2]  # win1, win2, draw
+    fight_id = int(parts[3])
+    await state.update_data(result=result)
+    # Запрашиваем подтверждение
+    await callback.message.edit_text(
+        f"Ты выбрал результат: {result}. Подтверди завершение боя?",
+        reply_markup=fight_confirm_keyboard()
+    )
+    await state.set_state(EndFight.confirm)
+    await callback.answer()
+
+@dp.callback_query(EndFight.confirm, F.data.startswith("fight_confirm_"))
+async def end_fight_confirm(callback: CallbackQuery, state: FSMContext):
+    action = callback.data.split("_")[2]
+    if action == "no":
+        await callback.message.edit_text("❌ Завершение отменено.")
+        await state.clear()
+        return
+    data = await state.get_data()
+    fight_id = data['fight_id']
+    result = data['result']
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            # Обновляем статус боя
+            if result == 'win1':
+                winner_id = await conn.fetchval("SELECT fighter1_id FROM fights WHERE id=$1", fight_id)
+                await conn.execute(
+                    "UPDATE fights SET status='finished', result='win1', winner_id=$1 WHERE id=$2",
+                    winner_id, fight_id
+                )
+                await conn.execute("UPDATE fighters SET wins = wins + 1 WHERE id=$1", winner_id)
+                loser_id = await conn.fetchval("SELECT fighter2_id FROM fights WHERE id=$1", fight_id)
+                await conn.execute("UPDATE fighters SET losses = losses + 1 WHERE id=$1", loser_id)
+            elif result == 'win2':
+                winner_id = await conn.fetchval("SELECT fighter2_id FROM fights WHERE id=$1", fight_id)
+                await conn.execute(
+                    "UPDATE fights SET status='finished', result='win2', winner_id=$1 WHERE id=$2",
+                    winner_id, fight_id
+                )
+                await conn.execute("UPDATE fighters SET wins = wins + 1 WHERE id=$1", winner_id)
+                loser_id = await conn.fetchval("SELECT fighter1_id FROM fights WHERE id=$1", fight_id)
+                await conn.execute("UPDATE fighters SET losses = losses + 1 WHERE id=$1", loser_id)
+            else:  # draw
+                await conn.execute(
+                    "UPDATE fights SET status='finished', result='draw' WHERE id=$1",
+                    fight_id
+                )
+                await conn.execute(
+                    "UPDATE fighters SET draws = draws + 1 WHERE id IN (SELECT fighter1_id FROM fights WHERE id=$1 UNION SELECT fighter2_id FROM fights WHERE id=$1)",
+                    fight_id
+                )
+                winner_id = None
+
+            # Обрабатываем ставки
+            bets = await conn.fetch("SELECT * FROM fight_bets WHERE fight_id=$1", fight_id)
+            for bet in bets:
+                user_id = bet['user_id']
+                amount = float(bet['amount_mlb'])
+                if winner_id is None:  # ничья
+                    refund_percent = await get_setting_float("fight_draw_refund_percent") / 100
+                    refund = amount * refund_percent
+                    await update_user_balance(user_id, refund, conn=conn, allow_negative=False)
+                    await conn.execute(
+                        "UPDATE fight_bets SET settled=TRUE, won=FALSE WHERE id=$1",
+                        bet['id']
+                    )
+                elif bet['fighter_id'] == winner_id:
+                    win_amount = float(bet['potential_win'])
+                    await update_user_balance(user_id, win_amount, conn=conn, allow_negative=False)
+                    await conn.execute(
+                        "UPDATE fight_bets SET settled=TRUE, won=TRUE WHERE id=$1",
+                        bet['id']
+                    )
+                else:
+                    await conn.execute(
+                        "UPDATE fight_bets SET settled=TRUE, won=FALSE WHERE id=$1",
+                        bet['id']
+                    )
+
+    await callback.message.edit_text("✅ Бой завершён, результаты обработаны.")
+    await state.clear()
+
+@dp.callback_query(F.data == "admin_fight_back")
+async def admin_fight_back(callback: CallbackQuery):
+    await callback.answer()
+    await admin_fights_main(callback.message)
+
+# ==================== РЕФЕРАЛЬНЫЙ ТОП ====================
+
+async def get_referral_top(limit: int = 10) -> List[Dict]:
+    """Возвращает топ рефералов по количеству активных рефералов."""
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT u.user_id, u.first_name, u.username, COUNT(r.referred_id) as ref_count
+            FROM users u
+            LEFT JOIN referrals r ON u.user_id = r.referrer_id AND r.active = TRUE
+            GROUP BY u.user_id
+            ORDER BY ref_count DESC
+            LIMIT $1
+        """, limit)
+        return [dict(r) for r in rows]
+
+@dp.message(F.text == "🏆 Топ рефералов")
+async def referral_top(message: Message):
+    """Показывает топ рефералов."""
+    top = await get_referral_top(limit=10)
+    if not top:
+        await message.answer("Пока нет рефералов.")
+        return
+    text = "🏆 Топ рефералов:\n\n"
+    for i, user in enumerate(top, 1):
+        name = user['first_name'] or f"ID{user['user_id']}"
+        username = f" (@{user['username']})" if user['username'] else ""
+        text += f"{i}. {name}{username} – {user['ref_count']} рефералов\n"
+    await message.answer(text)
+
+# ==================== СТАТИСТИКА ПО ЧАТАМ (ДЛЯ АДМИНА) ====================
+
+async def get_chat_stats() -> Dict:
+    """Возвращает общую статистику по чатам."""
+    async with db_pool.acquire() as conn:
+        total_chats = await conn.fetchval("SELECT COUNT(*) FROM confirmed_chats")
+        total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
+        return {"total_chats": total_chats, "total_users": total_users}
+
+@dp.message(F.text == "📊 Статистика чатов")
+async def chat_stats(message: Message):
+    """Показывает общую статистику по чатам."""
+    if not await check_admin_permissions(message.from_user.id, "view_stats"):
+        return
+    stats = await get_chat_stats()
+    text = (
+        f"📊 Статистика чатов:\n"
+        f"Всего подтверждённых чатов: {stats.get('total_chats', 0)}\n"
+        f"Всего пользователей: {stats.get('total_users', 0)}\n"
+    )
+    await message.answer(text)
+
+# ==================== ФОНОВАЯ ЗАДАЧА ДЛЯ АВТОМАТИЧЕСКОГО ЗАВЕРШЕНИЯ БОЁВ ====================
+
+async def fight_auto_resolver():
+    """Периодически проверяет бои, у которых наступило время окончания, и завершает их."""
+    while True:
+        try:
+            await asyncio.sleep(60)  # проверка раз в минуту
+            now = datetime.now()
+            async with db_pool.acquire() as conn:
+                # Находим бои, которые должны были закончиться, но ещё не завершены
+                overdue_fights = await conn.fetch("""
+                    SELECT * FROM fights WHERE status='scheduled' AND end_time <= $1
+                """, now)
+
+                for fight in overdue_fights:
+                    # Автоматически определяем результат (случайно, с небольшим перевесом в сторону статистики)
+                    fighter1 = await conn.fetchrow("SELECT wins, losses FROM fighters WHERE id=$1", fight['fighter1_id'])
+                    fighter2 = await conn.fetchrow("SELECT wins, losses FROM fighters WHERE id=$1", fight['fighter2_id'])
+                    # Простой алгоритм: шанс на победу пропорционален отношению побед к поражениям, но не менее 30%
+                    total1 = fighter1['wins'] + fighter1['losses'] + 1
+                    total2 = fighter2['wins'] + fighter2['losses'] + 1
+                    chance1 = max(30, min(70, fighter1['wins'] / total1 * 100))
+                    chance2 = max(30, min(70, fighter2['wins'] / total2 * 100))
+                    # Нормализуем
+                    total = chance1 + chance2
+                    chance1 = chance1 / total * 100
+                    chance2 = chance2 / total * 100
+                    rand = random.uniform(0, 100)
+                    if rand < chance1:
+                        result = 'win1'
+                    elif rand < chance1 + chance2:
+                        result = 'win2'
+                    else:
+                        result = 'draw'
+
+                    # Применяем результат (аналогично ручному завершению)
+                    async with conn.transaction():
+                        if result == 'win1':
+                            winner_id = fight['fighter1_id']
+                            await conn.execute(
+                                "UPDATE fights SET status='finished', result='win1', winner_id=$1 WHERE id=$2",
+                                winner_id, fight['id']
+                            )
+                            await conn.execute("UPDATE fighters SET wins = wins + 1 WHERE id=$1", winner_id)
+                            await conn.execute("UPDATE fighters SET losses = losses + 1 WHERE id=$1", fight['fighter2_id'])
+                        elif result == 'win2':
+                            winner_id = fight['fighter2_id']
+                            await conn.execute(
+                                "UPDATE fights SET status='finished', result='win2', winner_id=$1 WHERE id=$2",
+                                winner_id, fight['id']
+                            )
+                            await conn.execute("UPDATE fighters SET wins = wins + 1 WHERE id=$1", winner_id)
+                            await conn.execute("UPDATE fighters SET losses = losses + 1 WHERE id=$1", fight['fighter1_id'])
+                        else:
+                            await conn.execute(
+                                "UPDATE fights SET status='finished', result='draw' WHERE id=$1",
+                                fight['id']
+                            )
+                            await conn.execute(
+                                "UPDATE fighters SET draws = draws + 1 WHERE id IN ($1, $2)",
+                                fight['fighter1_id'], fight['fighter2_id']
+                            )
+                            winner_id = None
+
+                        # Обрабатываем ставки
+                        bets = await conn.fetch("SELECT * FROM fight_bets WHERE fight_id=$1", fight['id'])
+                        for bet in bets:
+                            user_id = bet['user_id']
+                            amount = float(bet['amount_mlb'])
+                            if winner_id is None:  # ничья
+                                refund_percent = await get_setting_float("fight_draw_refund_percent") / 100
+                                refund = amount * refund_percent
+                                await update_user_balance(user_id, refund, conn=conn, allow_negative=False)
+                                await conn.execute(
+                                    "UPDATE fight_bets SET settled=TRUE, won=FALSE WHERE id=$1",
+                                    bet['id']
+                                )
+                            elif bet['fighter_id'] == winner_id:
+                                win_amount = float(bet['potential_win'])
+                                await update_user_balance(user_id, win_amount, conn=conn, allow_negative=False)
+                                await conn.execute(
+                                    "UPDATE fight_bets SET settled=TRUE, won=TRUE WHERE id=$1",
+                                    bet['id']
+                                )
+                            else:
+                                await conn.execute(
+                                    "UPDATE fight_bets SET settled=TRUE, won=FALSE WHERE id=$1",
+                                    bet['id']
+                                )
+        except Exception as e:
+            logging.error(f"Ошибка в fight_auto_resolver: {e}")
+            await asyncio.sleep(60)
+
+# ==================== ФОНОВАЯ ЗАДАЧА: НАГРАЖДЕНИЕ ТОПА РЕФЕРАЛОВ ====================
+
+async def referral_top_reward():
+    """Раз в неделю награждает топ рефералов BTC."""
+    while True:
+        interval_days = await get_setting_int("referral_top_interval_days")
+        await asyncio.sleep(interval_days * 86400)
+        top_count = await get_setting_int("referral_top_count")
+        reward_btc = await get_setting_float("referral_top_reward_btc")
+        top = await get_referral_top(limit=top_count)
+        for user in top:
+            user_id = user['user_id']
+            await update_user_bitcoin(user_id, reward_btc)
+            await safe_send_message(
+                user_id,
+                f"🏆 Ты попал в топ рефералов и получаешь {reward_btc:.4f} BTC!"
+            )
+
+# ==================== КОНЕЦ ЧАСТИ 4 ====================
