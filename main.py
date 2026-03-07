@@ -3,16 +3,15 @@ import os
 import json
 import asyncpg
 from datetime import datetime
-import traceback
 
-# ==================== НАСТРОЙКИ ====================
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@host:port/dbname")
-JSON_BACKUP_FILE = "db_backup_20260306_142038.json"  # ваш файл дампа
-# ==================================================
+# ==== ЕДИНСТВЕННОЕ, ЧТО НУЖНО ИЗМЕНИТЬ ====
+DATABASE_URL = "postgresql://username:password@localhost:5432/dbname"
+# Замените на свои данные от БД!
+# ==========================================
 
-# ==================== ПОЛНЫЙ СПИСОК ТАБЛИЦ (32 шт.) ====================
-CREATE_TABLES_ORDERED = [
-    # 1. users - основная таблица пользователей
+# ==== ПОЛНОЕ СОЗДАНИЕ ВСЕХ ТАБЛИЦ (32 шт) ====
+CREATE_TABLES = [
+    # 1. users
     """
     CREATE TABLE IF NOT EXISTS users (
         user_id BIGINT PRIMARY KEY,
@@ -368,7 +367,7 @@ CREATE_TABLES_ORDERED = [
         UNIQUE(user_id, chat_id, warned_at)
     )
     """,
-    # 28. bitcoin_trades (зависит от bitcoin_orders)
+    # 28. bitcoin_trades
     """
     CREATE TABLE IF NOT EXISTS bitcoin_trades (
         id SERIAL PRIMARY KEY,
@@ -381,7 +380,7 @@ CREATE_TABLES_ORDERED = [
         traded_at TIMESTAMP DEFAULT NOW()
     )
     """,
-    # 29. heist_participants (зависит от heists)
+    # 29. heist_participants
     """
     CREATE TABLE IF NOT EXISTS heist_participants (
         heist_id INTEGER REFERENCES heists(id) ON DELETE CASCADE,
@@ -395,7 +394,7 @@ CREATE_TABLES_ORDERED = [
         PRIMARY KEY (heist_id, user_id)
     )
     """,
-    # 30. heist_betrayals (зависит от heists)
+    # 30. heist_betrayals
     """
     CREATE TABLE IF NOT EXISTS heist_betrayals (
         id SERIAL PRIMARY KEY,
@@ -407,7 +406,7 @@ CREATE_TABLES_ORDERED = [
         created_at TIMESTAMP NOT NULL
     )
     """,
-    # 31. user_businesses (зависит от users и business_types)
+    # 31. user_businesses
     """
     CREATE TABLE IF NOT EXISTS user_businesses (
         id SERIAL PRIMARY KEY,
@@ -422,7 +421,7 @@ CREATE_TABLES_ORDERED = [
         UNIQUE(user_id, business_type_id)
     )
     """,
-    # 32. user_tasks (зависит от tasks)
+    # 32. user_tasks
     """
     CREATE TABLE IF NOT EXISTS user_tasks (
         user_id BIGINT,
@@ -435,171 +434,42 @@ CREATE_TABLES_ORDERED = [
     """
 ]
 
-# ==================== ОСНОВНАЯ ФУНКЦИЯ ====================
-async def full_rebuild_and_restore():
-    print("🔨 ПОЛНОЕ ПЕРЕСОЗДАНИЕ БД И ВОССТАНОВЛЕНИЕ ИЗ JSON")
-    print("="*70)
-
-    # 1. Подключаемся к БД
+async def main():
+    print("🚀 НАЧАЛО ПОЛНОГО ВОССТАНОВЛЕНИЯ БД")
+    print("=" * 50)
+    
     try:
+        # Подключаемся
         conn = await asyncpg.connect(DATABASE_URL)
-        print("✅ Подключение к БД успешно")
-    except Exception as e:
-        print(f"❌ Ошибка подключения: {e}")
-        return
-
-    # 2. Удаляем все существующие таблицы
-    print("\n🗑️ Удаление старых таблиц...")
-    tables = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname = 'public'")
-    for t in tables:
-        try:
+        print("✅ Подключено к БД")
+        
+        # Удаляем всё
+        tables = await conn.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")
+        for t in tables:
             await conn.execute(f'DROP TABLE IF EXISTS "{t["tablename"]}" CASCADE')
-        except:
-            pass
-    print(f"   Удалено {len(tables)} таблиц")
-
-    # 3. Создаём таблицы заново
-    print("\n🏗️ Создание таблиц...")
-    for i, sql in enumerate(CREATE_TABLES_ORDERED, 1):
-        try:
-            await conn.execute(sql)
-            print(f"   ✅ [{i:2d}/{len(CREATE_TABLES_ORDERED)}] Таблица создана")
-        except Exception as e:
-            print(f"   ❌ [{i:2d}] Ошибка: {e}")
-            await conn.close()
-            return
-
-    # 4. Загружаем JSON
-    print(f"\n📂 Загрузка {JSON_BACKUP_FILE}...")
-    try:
-        with open(JSON_BACKUP_FILE, 'r', encoding='utf-8') as f:
-            backup = json.load(f)
-        print(f"   ✅ JSON загружен (версия {backup.get('version', 'N/A')})")
-    except Exception as e:
-        print(f"   ❌ Ошибка чтения JSON: {e}")
-        await conn.close()
-        return
-
-    # 5. Отключаем проверку внешних ключей
-    await conn.execute("SET session_replication_role = 'replica';")
-    
-    # 6. Загружаем данные
-    print("\n📥 ЗАГРУЗКА ДАННЫХ")
-    print("-" * 70)
-    
-    tables_data = backup.get('tables', {})
-    error_log = []
-    stats = {'total': 0, 'success': 0, 'failed': 0}
-    
-    # Порядок загрузки (сначала таблицы без внешних ключей)
-    load_order = [
-        'users', 'admins', 'banned_users', 'bitcoin_orders', 'business_types',
-        'channels', 'chat_confirmation_requests', 'confirmed_chats', 'giveaways',
-        'global_cooldowns', 'heists', 'jail_sentences', 'level_rewards',
-        'media', 'participants', 'promo_activations', 'promocodes',
-        'purchases', 'referrals', 'reset_keys', 'settings', 'shop_items',
-        'smuggle_cooldowns', 'smuggle_runs', 'tasks', 'user_last_bets',
-        'warnings', 'bitcoin_trades', 'heist_participants',
-        'heist_betrayals', 'user_businesses', 'user_tasks'
-    ]
-    
-    for table_name in load_order:
-        if table_name not in tables_data:
-            continue
-            
-        table_info = tables_data[table_name]
-        rows = table_info.get('rows', [])
+        print(f"🗑️ Удалено {len(tables)} таблиц")
         
-        if not rows:
-            print(f"⏭️ {table_name:25} : нет данных")
-            continue
-            
-        columns = [col['name'] for col in table_info.get('columns', [])]
-        placeholders = ','.join(f'${i+1}' for i in range(len(columns)))
-        cols_str = ','.join(columns)
-        
-        # Очищаем таблицу
-        try:
-            await conn.execute(f"TRUNCATE TABLE {table_name} RESTART IDENTITY CASCADE")
-        except Exception as e:
-            error_log.append(f"{table_name}: ошибка очистки - {e}")
-            continue
-        
-        success = 0
-        for row in rows:
-            # Преобразуем значения
-            clean_row = []
-            for col in columns:
-                value = row.get(col)
-                
-                # Преобразование дат
-                if isinstance(value, str) and any(x in col.lower() for x in ['date', 'time', '_at']):
-                    try:
-                        for fmt in ('%Y-%m-%dT%H:%M:%S.%f', '%Y-%m-%dT%H:%M:%S',
-                                   '%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y-%m-%d'):
-                            try:
-                                value = datetime.strptime(value, fmt)
-                                break
-                            except ValueError:
-                                continue
-                    except:
-                        pass
-                
-                clean_row.append(value)
-            
-            # Вставка
+        # Создаём заново
+        print("\n🏗️ СОЗДАНИЕ ТАБЛИЦ:")
+        for i, sql in enumerate(CREATE_TABLES, 1):
             try:
-                await conn.execute(
-                    f"INSERT INTO {table_name} ({cols_str}) VALUES ({placeholders})",
-                    *clean_row
-                )
-                success += 1
+                await conn.execute(sql)
+                print(f"  ✅ {i:2d}. Таблица создана")
             except Exception as e:
-                error_msg = f"{table_name}: {str(e)[:100]}"
-                if error_msg not in error_log:  # избегаем дублирования
-                    error_log.append(error_msg)
+                print(f"  ❌ {i:2d}. Ошибка: {e}")
         
-        stats['total'] += len(rows)
-        stats['success'] += success
-        stats['failed'] += (len(rows) - success)
+        print("\n" + "=" * 50)
+        print("✅ БАЗА ДАННЫХ ПОЛНОСТЬЮ СОЗДАНА!")
+        print("\nТеперь база пустая. Если у вас есть дамп в JSON:")
+        print("1. Поместите файл db_backup.json в эту же папку")
+        print("2. Запустите эту же программу ещё раз с параметром load")
+        print("\nИли просто перезапустите бота - он сам создаст")
+        print("необходимые начальные данные (настройки, бизнесы и т.д.)")
         
-        status = "✅" if success == len(rows) else "⚠️"
-        print(f"{status} {table_name:25} : {success:4d}/{len(rows):4d} записей")
-    
-    # 7. Включаем обратно проверку ключей
-    await conn.execute("SET session_replication_role = 'origin';")
-    await conn.close()
-    
-    # 8. Итоговый отчёт
-    print("\n" + "="*70)
-    print("📊 ИТОГОВАЯ СТАТИСТИКА")
-    print("="*70)
-    print(f"📥 Всего записей в дампе: {stats['total']}")
-    print(f"✅ Успешно загружено: {stats['success']}")
-    print(f"❌ Ошибок: {stats['failed']}")
-    
-    if error_log:
-        print(f"\n⚠️ Найдено {len(error_log)} уникальных ошибок")
-        print("\n📋 ПЕРВЫЕ 10 ОШИБОК:")
-        for i, err in enumerate(error_log[:10], 1):
-            print(f"{i:2d}. {err}")
+        await conn.close()
         
-        # Сохраняем полный лог
-        with open("restore_errors.log", "w", encoding='utf-8') as f:
-            f.write("\n".join(error_log))
-        print(f"\n💾 Полный лог ошибок сохранён в restore_errors.log")
-    else:
-        print("\n🎉 ОШИБОК НЕТ! Восстановление выполнено идеально!")
-    
-    print("\n" + "="*70)
-    print("🚀 ГОТОВО! Можно запускать основного бота.")
-    print("="*70)
+    except Exception as e:
+        print(f"\n❌ КРИТИЧЕСКАЯ ОШИБКА: {e}")
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(full_rebuild_and_restore())
-    except KeyboardInterrupt:
-        print("\n❌ Прервано пользователем")
-    except Exception as e:
-        print(f"\n❌ Необработанная ошибка: {e}")
-        traceback.print_exc()
+    asyncio.run(main())
