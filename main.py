@@ -1075,25 +1075,9 @@ async def init_db():
             ''')
             await conn.execute('ALTER TABLE users ADD CONSTRAINT users_username_unique UNIQUE (username)')
         else:
-            logging.info("Ограничение users_username_unique уже существует, пропускаем создание")
+                    logging.info("Ограничение users_username_unique уже существует, пропускаем создание")
 
-        # Таблица user_businesses
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS user_businesses (
-                id SERIAL PRIMARY KEY,
-                user_id BIGINT NOT NULL,
-                business_type_id INTEGER NOT NULL,
-                level INTEGER DEFAULT 1,
-                last_collection TIMESTAMP,
-                purchased_at TIMESTAMP DEFAULT NOW(),
-                expires_at TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
-                FOREIGN KEY (business_type_id) REFERENCES business_types(id) ON DELETE CASCADE,
-                UNIQUE(user_id, business_type_id)
-            )
-        ''')
-
-        # Таблица business_types
+        # Сначала business_types
         await conn.execute('''
             CREATE TABLE IF NOT EXISTS business_types (
                 id SERIAL PRIMARY KEY,
@@ -1106,6 +1090,22 @@ async def init_db():
                 available BOOLEAN DEFAULT TRUE,
                 image_key TEXT,
                 lifetime_hours INTEGER DEFAULT 720
+            )
+        ''')
+
+        # Потом user_businesses (ссылается на business_types)
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS user_businesses (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                business_type_id INTEGER NOT NULL,
+                level INTEGER DEFAULT 1,
+                last_collection TIMESTAMP,
+                purchased_at TIMESTAMP DEFAULT NOW(),
+                expires_at TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE,
+                FOREIGN KEY (business_type_id) REFERENCES business_types(id) ON DELETE CASCADE,
+                UNIQUE(user_id, business_type_id)
             )
         ''')
 
