@@ -2714,3 +2714,873 @@ async def get_chat_stats(chat_id: int = None) -> Dict:
             }
 
 # ==================== КОНЕЦ ЧАСТИ 1.2 ====================
+# ==================== ЧАСТЬ 2: СОСТОЯНИЯ FSM И КЛАВИАТУРЫ ====================
+
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
+from typing import List, Dict, Tuple, Optional
+
+# ==================== СОСТОЯНИЯ FSM ====================
+
+class CreateGiveaway(StatesGroup):
+    prize = State()
+    description = State()
+    condition_type = State()
+    end_date = State()
+    min_participants = State()
+    winners_count = State()
+    media = State()
+
+class AddChannel(StatesGroup):
+    chat_id = State()
+    title = State()
+    invite_link = State()
+
+class RemoveChannel(StatesGroup):
+    chat_id = State()
+
+class AddShopItem(StatesGroup):
+    name = State()
+    description = State()
+    price = State()
+    stock = State()
+    photo = State()
+
+class RemoveShopItem(StatesGroup):
+    item_id = State()
+
+class EditShopItem(StatesGroup):
+    item_id = State()
+    field = State()
+    value = State()
+
+class CreatePromocode(StatesGroup):
+    code = State()
+    reward = State()
+    reward_type = State()
+    max_uses = State()
+
+class Broadcast(StatesGroup):
+    media = State()
+
+class AddBalance(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class RemoveBalance(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class AddReputation(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class RemoveReputation(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class AddExp(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class SetLevel(StatesGroup):
+    user_id = State()
+    level = State()
+
+class AddBitcoin(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class RemoveBitcoin(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class AddAuthority(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class RemoveAuthority(StatesGroup):
+    user_id = State()
+    amount = State()
+
+class DiceBet(StatesGroup):
+    amount = State()
+
+class GuessBet(StatesGroup):
+    amount = State()
+    number = State()
+
+class SlotsBet(StatesGroup):
+    amount = State()
+
+class RouletteBet(StatesGroup):
+    amount = State()
+    bet_type = State()
+    number = State()
+
+class PromoActivate(StatesGroup):
+    code = State()
+
+class TheftTarget(StatesGroup):
+    target = State()
+
+class FindUser(StatesGroup):
+    query = State()
+
+class AddJuniorAdmin(StatesGroup):
+    user_id = State()
+    permissions = State()
+
+class EditAdminPermissions(StatesGroup):
+    user_id = State()
+    selecting_permissions = State()
+    confirm = State()
+
+class RemoveJuniorAdmin(StatesGroup):
+    user_id = State()
+
+class CompleteGiveaway(StatesGroup):
+    giveaway_id = State()
+    winners_count = State()
+
+class BlockUser(StatesGroup):
+    user_id = State()
+    reason = State()
+
+class UnblockUser(StatesGroup):
+    user_id = State()
+
+class EditSettings(StatesGroup):
+    key = State()
+    value = State()
+
+class CreateTask(StatesGroup):
+    name = State()
+    description = State()
+    task_type = State()
+    target_id = State()
+    reward_coins = State()
+    reward_reputation = State()
+    required_days = State()
+    penalty_days = State()
+    max_completions = State()
+    media = State()
+    button_link = State()
+
+class DeleteTask(StatesGroup):
+    task_id = State()
+
+class ManageChats(StatesGroup):
+    action = State()
+    chat_id = State()
+
+class AddBusiness(StatesGroup):
+    name = State()
+    emoji = State()
+    price = State()
+    income = State()
+    description = State()
+    max_level = State()
+    lifetime_hours = State()
+    image_key = State()
+
+class EditBusiness(StatesGroup):
+    business_id = State()
+    field = State()
+    value = State()
+
+class ToggleBusiness(StatesGroup):
+    business_id = State()
+    confirm = State()
+
+class BuyBusiness(StatesGroup):
+    business_type_id = State()
+    confirming = State()
+
+class UpgradeBusiness(StatesGroup):
+    business_id = State()
+    confirming = State()
+
+class AddMedia(StatesGroup):
+    key = State()
+    file = State()
+
+class RemoveMedia(StatesGroup):
+    key = State()
+
+# ----- Состояния для биржи -----
+class BuyBitcoin(StatesGroup):
+    amount = State()
+    price = State()
+
+class SellBitcoin(StatesGroup):
+    amount = State()
+    price = State()
+
+class CancelBitcoinOrder(StatesGroup):
+    order_id = State()
+
+class BuyFromPrice(StatesGroup):
+    amount = State()
+
+class SellToPrice(StatesGroup):
+    amount = State()
+
+class HeistBetrayConfirm(StatesGroup):
+    pass
+
+class JailProcess(StatesGroup):
+    cell = State()
+    article = State()
+
+class UpgradeSkill(StatesGroup):
+    skill = State()
+    confirming = State()
+
+class AdminResetStats(StatesGroup):
+    user_id = State()
+    confirm_key = State()
+
+class PurchaseReject(StatesGroup):
+    comment = State()
+
+class EditGiveaway(StatesGroup):
+    field = State()
+    prize = State()
+    description = State()
+    end_date = State()
+    min_participants = State()
+    winners_count = State()
+    media = State()
+
+class PurchaseItem(StatesGroup):
+    item_id = State()
+
+# ==================== НОВЫЕ СОСТОЯНИЯ ДЛЯ ПОДПОЛЬНЫХ БОЁВ ====================
+class AddFighter(StatesGroup):
+    name = State()
+    emoji = State()
+    description = State()
+    image_key = State()
+    confirm = State()
+
+class EditFighter(StatesGroup):
+    value = State()  # ожидание нового значения для выбранного поля
+
+class CreateFight(StatesGroup):
+    fighter1_id = State()
+    fighter2_id = State()
+    start_delay_minutes = State()
+    confirm = State()
+
+class EndFight(StatesGroup):
+    confirm = State()
+
+class FightBet(StatesGroup):
+    select_fighter = State()   # выбор бойца
+    amount = State()            # ввод суммы ставки
+    confirm = State()           # подтверждение
+
+# ==================== ВСПОМОГАТЕЛЬНЫЕ КЛАВИАТУРЫ (Reply) ====================
+
+def back_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура с кнопкой '◀️ Назад'."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="◀️ Назад")]],
+        resize_keyboard=True
+    )
+
+def cancel_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура с кнопкой '❌ Отмена'."""
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="❌ Отмена")]],
+        resize_keyboard=True
+    )
+
+def main_menu_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
+    """Главное меню (Reply-кнопки)."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="👤 Профиль"),
+        KeyboardButton(text="🎁 Бонус")
+    )
+    builder.row(
+        KeyboardButton(text="🛒 Магазин"),
+        KeyboardButton(text="🎰 Казино")
+    )
+    builder.row(
+        KeyboardButton(text="🎟 Промокод"),
+        KeyboardButton(text="🏆 Топ игроков")
+    )
+    builder.row(
+        KeyboardButton(text="💰 Мои покупки"),
+        KeyboardButton(text="🔫 Ограбить")
+    )
+    builder.row(
+        KeyboardButton(text="📋 Задания"),
+        KeyboardButton(text="🔗 Рефералка")
+    )
+    builder.row(
+        KeyboardButton(text="🎁 Розыгрыши"),
+        KeyboardButton(text="📊 Уровень")
+    )
+    builder.row(
+        KeyboardButton(text="🏪 Фармилка"),
+        KeyboardButton(text="💼 Биткоин-биржа")
+    )
+    builder.row(
+        KeyboardButton(text="🎓 Университет")
+    )
+    builder.row(
+        KeyboardButton(text="🥊 Подпольные бои")
+    )
+    if is_admin:
+        builder.row(KeyboardButton(text="⚙️ Админка"))
+    return builder.as_markup(resize_keyboard=True)
+
+def casino_menu_keyboard() -> ReplyKeyboardMarkup:
+    """Меню казино."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="🎲 Кости"),
+        KeyboardButton(text="🔢 Угадай число")
+    )
+    builder.row(
+        KeyboardButton(text="🍒 Слоты"),
+        KeyboardButton(text="🎡 Рулетка")
+    )
+    builder.row(KeyboardButton(text="◀️ Назад"))
+    return builder.as_markup(resize_keyboard=True)
+
+def theft_choice_keyboard() -> ReplyKeyboardMarkup:
+    """Меню выбора цели для кражи."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎲 Случайная цель")],
+            [KeyboardButton(text="👤 Выбрать пользователя")],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+def bitcoin_exchange_keyboard() -> ReplyKeyboardMarkup:
+    """Меню биткоин-биржи."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📈 Купить BTC"), KeyboardButton(text="📉 Продать BTC")],
+            [KeyboardButton(text="📋 Мои заявки"), KeyboardButton(text="📊 Стакан заявок")],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+def giveaways_user_keyboard() -> ReplyKeyboardMarkup:
+    """Меню розыгрышей для пользователя."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Активные розыгрыши")],
+            [KeyboardButton(text="🏁 Завершённые розыгрыши")],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+
+def business_main_keyboard(businesses: List[dict]) -> ReplyKeyboardMarkup:
+    """Клавиатура со списком фармилок пользователя."""
+    builder = ReplyKeyboardBuilder()
+    for biz in businesses:
+        builder.row(KeyboardButton(text=f"{biz['emoji']} {biz['name']} (ур. {biz['level']})"))
+    builder.row(KeyboardButton(text="🛒 Купить новую фармилку"))
+    builder.row(KeyboardButton(text="◀️ Назад"))
+    return builder.as_markup(resize_keyboard=True)
+
+def business_actions_keyboard() -> ReplyKeyboardMarkup:
+    """Клавиатура действий с выбранной фармилкой."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="💰 Собрать доход")],
+            [KeyboardButton(text="⬆️ Улучшить")],
+            [KeyboardButton(text="◀️ Назад к списку фармилок")]
+        ],
+        resize_keyboard=True
+    )
+
+def business_buy_keyboard(business_types: List[dict]) -> ReplyKeyboardMarkup:
+    """Клавиатура для выбора фармилки при покупке."""
+    builder = ReplyKeyboardBuilder()
+    for bt in business_types:
+        builder.row(KeyboardButton(text=f"{bt['emoji']} {bt['name']} – {bt['base_price_btc']} BTC"))
+    builder.row(KeyboardButton(text="◀️ Отмена"))
+    return builder.as_markup(resize_keyboard=True)
+
+# ==================== ПЕРЕРАБОТАННОЕ МЕНЮ АДМИНКИ ====================
+
+def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
+    """Главное меню админ-панели."""
+    keyboard_rows = []
+    
+    # Строка 1: Пользователи, Управление магазином, Розыгрыши
+    row1 = []
+    if "manage_users" in permissions:
+        row1.append(KeyboardButton(text="👥 Пользователи"))
+    if "manage_shop" in permissions:
+        row1.append(KeyboardButton(text="🛒 Управление магазином"))  # переименовано
+    if "manage_giveaways" in permissions:
+        row1.append(KeyboardButton(text="🎁 Розыгрыши"))
+    if row1:
+        keyboard_rows.append(row1)
+    
+    # Строка 2: Каналы, Чаты, Промокоды
+    row2 = []
+    if "manage_channels" in permissions:
+        row2.append(KeyboardButton(text="📢 Каналы"))
+    if "manage_chats" in permissions:
+        row2.append(KeyboardButton(text="🤖 Чаты"))
+    if "manage_promocodes" in permissions:
+        row2.append(KeyboardButton(text="🎫 Промокоды"))
+    if row2:
+        keyboard_rows.append(row2)
+    
+    # Строка 3: Бизнесы, Биржа, Медиа
+    row3 = []
+    if "manage_businesses" in permissions:
+        row3.append(KeyboardButton(text="🏪 Бизнесы"))
+    if "manage_exchange" in permissions:
+        row3.append(KeyboardButton(text="💼 Биржа"))
+    if "manage_media" in permissions:
+        row3.append(KeyboardButton(text="🖼 Медиа"))
+    if row3:
+        keyboard_rows.append(row3)
+    
+    # Строка 4: Управление боями
+    row4 = []
+    if "manage_businesses" in permissions:  # используем то же право или можно добавить отдельное
+        row4.append(KeyboardButton(text="🥊 Управление боями"))
+    if row4:
+        keyboard_rows.append(row4)
+    
+    # Строка 5: Статистика, Рассылка, Настройки, Очистка
+    row5 = []
+    if "view_stats" in permissions:
+        row5.append(KeyboardButton(text="📊 Статистика"))
+    if "broadcast" in permissions:
+        row5.append(KeyboardButton(text="📢 Рассылка"))
+    if "edit_settings" in permissions:
+        row5.append(KeyboardButton(text="⚙️ Настройки"))
+    if "cleanup" in permissions:
+        row5.append(KeyboardButton(text="🧹 Очистка"))
+    if row5:
+        keyboard_rows.append(row5)
+    
+    # Строка 6: Администраторы
+    row6 = []
+    if "manage_admins" in permissions:
+        row6.append(KeyboardButton(text="👑 Администраторы"))
+    if row6:
+        keyboard_rows.append(row6)
+    
+    # Последняя строка: Назад в главное меню
+    keyboard_rows.append([KeyboardButton(text="◀️ Назад в главное меню")])
+    
+    return ReplyKeyboardMarkup(keyboard=keyboard_rows, resize_keyboard=True)
+
+# ==================== ПОДМЕНЮ ДЛЯ КАЖДОГО РАЗДЕЛА ====================
+
+def admin_users_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления пользователями."""
+    builder = ReplyKeyboardBuilder()
+    builder.row(
+        KeyboardButton(text="💰 Начислить MLB"),
+        KeyboardButton(text="💸 Списать MLB")
+    )
+    builder.row(
+        KeyboardButton(text="⭐️ Начислить репутацию"),
+        KeyboardButton(text="🔻 Снять репутацию")
+    )
+    builder.row(
+        KeyboardButton(text="📈 Начислить опыт"),
+        KeyboardButton(text="🔝 Установить уровень")
+    )
+    builder.row(
+        KeyboardButton(text="₿ Начислить биткоины"),
+        KeyboardButton(text="₿ Списать биткоины")
+    )
+    builder.row(
+        KeyboardButton(text="⚔️ Начислить авторитет"),
+        KeyboardButton(text="⚔️ Списать авторитет")
+    )
+    builder.row(
+        KeyboardButton(text="👥 Найти пользователя"),
+        KeyboardButton(text="📊 Экспорт пользователей")
+    )
+    builder.row(
+        KeyboardButton(text="🔄 Сброс статистики")
+    )
+    builder.row(
+        KeyboardButton(text="⛔ Заблокировать"),
+        KeyboardButton(text="✅ Разблокировать")
+    )
+    builder.row(KeyboardButton(text="◀️ Назад в админку"))
+    return builder.as_markup(resize_keyboard=True)
+
+def admin_shop_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления магазином."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить товар")],
+            [KeyboardButton(text="➖ Удалить товар")],
+            [KeyboardButton(text="✏️ Редактировать товар")],
+            [KeyboardButton(text="📋 Список товаров")],
+            [KeyboardButton(text="🛍️ Список покупок")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_giveaway_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления розыгрышами."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Создать розыгрыш")],
+            [KeyboardButton(text="📋 Активные розыгрыши")],
+            [KeyboardButton(text="✅ Завершить розыгрыш")],
+            [KeyboardButton(text="🏁 Завершённые розыгрыши")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_channel_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления каналами."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить канал")],
+            [KeyboardButton(text="➖ Удалить канал")],
+            [KeyboardButton(text="📋 Список каналов")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_promo_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления промокодами."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Создать промокод")],
+            [KeyboardButton(text="📋 Список промокодов")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_business_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления бизнесами."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Список бизнесов")],
+            [KeyboardButton(text="➕ Добавить бизнес")],
+            [KeyboardButton(text="✏️ Редактировать бизнес")],
+            [KeyboardButton(text="🔄 Переключить доступность")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_exchange_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления биржей."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Активные заявки")],
+            [KeyboardButton(text="❌ Удалить заявку")],
+            [KeyboardButton(text="📊 История сделок")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_media_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления медиа."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить медиа")],
+            [KeyboardButton(text="➖ Удалить медиа")],
+            [KeyboardButton(text="📋 Список медиа")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_chats_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления чатами."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Запросы на подтверждение")],
+            [KeyboardButton(text="✅ Подтвердить чат")],
+            [KeyboardButton(text="❌ Отклонить запрос")],
+            [KeyboardButton(text="🗑 Удалить чат")],
+            [KeyboardButton(text="📋 Подтверждённые чаты")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_admins_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления администраторами."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить администратора")],
+            [KeyboardButton(text="✏️ Редактировать права")],
+            [KeyboardButton(text="➖ Удалить администратора")],
+            [KeyboardButton(text="📋 Список администраторов")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_tasks_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления заданиями."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Создать задание")],
+            [KeyboardButton(text="📋 Список заданий")],
+            [KeyboardButton(text="❌ Удалить задание")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def admin_fights_keyboard() -> ReplyKeyboardMarkup:
+    """Подменю управления боями."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🥊 Бойцы")],
+            [KeyboardButton(text="🥊 Бои")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+def settings_categories_keyboard() -> ReplyKeyboardMarkup:
+    """Меню категорий настроек."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="⚙️ Казино")],
+            [KeyboardButton(text="⚙️ Кража")],
+            [KeyboardButton(text="⚙️ Кидалово")],
+            [KeyboardButton(text="⚙️ Налёты")],
+            [KeyboardButton(text="⚙️ Фармилка")],
+            [KeyboardButton(text="⚙️ Опыт и уровни")],
+            [KeyboardButton(text="⚙️ Рефералы")],
+            [KeyboardButton(text="⚙️ Подгон")],
+            [KeyboardButton(text="⚙️ Биткоин-биржа")],
+            [KeyboardButton(text="⚙️ Автоудаление")],
+            [KeyboardButton(text="⚙️ Прокачка навыков")],
+            [KeyboardButton(text="⚙️ Контрабанда")],
+            [KeyboardButton(text="⚙️ Тюрьма")],
+            [KeyboardButton(text="⚙️ Задания")],
+            [KeyboardButton(text="⚙️ Промокоды")],
+            [KeyboardButton(text="⚙️ Подпольные бои")],
+            [KeyboardButton(text="◀️ Назад в админку")]
+        ],
+        resize_keyboard=True
+    )
+
+# ==================== КЛАВИАТУРЫ ДЛЯ ВЫБОРА ЧИСЕЛ (Inline) ====================
+
+def guess_number_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i in range(1, 6):
+        builder.button(text=str(i), callback_data=f"guess_num_{i}", color="primary")  # style → color
+    builder.button(text="❌ Отмена", callback_data="guess_cancel", color="danger")
+    builder.adjust(3)
+    return builder.as_markup()
+
+def roulette_type_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔴 Красное", callback_data="roulette_type_red", color="primary")
+    builder.button(text="⚫️ Чёрное", callback_data="roulette_type_black", color="primary")
+    builder.button(text="🟢 Зелёное", callback_data="roulette_type_green", color="primary")
+    builder.button(text="🔢 Число", callback_data="roulette_type_number", color="primary")
+    builder.button(text="❌ Отмена", callback_data="roulette_cancel", color="danger")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def roulette_number_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i in range(0, 37):
+        builder.button(text=str(i), callback_data=f"roulette_num_{i}", color="primary")
+    builder.button(text="❌ Отмена", callback_data="roulette_cancel", color="danger")
+    builder.adjust(5)
+    return builder.as_markup()
+
+def repeat_bet_keyboard(game: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔁 Повторить", callback_data=f"repeat_{game}", color="success")
+    return builder.as_markup()
+
+# ==================== КЛАВИАТУРЫ ДЛЯ ПОДТВЕРЖДЕНИЯ И Т.П. ====================
+
+def confirm_chat_inline(chat_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить", callback_data=f"confirm_chat_{chat_id}", color="success")
+    builder.button(text="❌ Отклонить", callback_data=f"reject_chat_{chat_id}", color="danger")
+    return builder.as_markup()
+
+def subscription_inline(not_subscribed: List[Tuple[str, str]]) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for title, link in not_subscribed:
+        if link:
+            builder.button(text=f"📢 {title}", url=link, color="primary")
+        else:
+            builder.button(text=f"📢 {title}", callback_data="no_link", color="secondary")
+    builder.button(text="✅ Я подписался", callback_data="check_sub", color="success")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def betray_choice_keyboard(heist_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🔪 Украсть у подельников", callback_data=f"betray_choice_yes_{heist_id}", color="danger")
+    builder.button(text="❌ Отказаться", callback_data=f"betray_choice_no_{heist_id}", color="secondary")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def jail_cell_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for i in range(1, 16):
+        builder.button(text=str(i), callback_data=f"jail_cell_{i}", color="primary")
+    builder.adjust(5)
+    return builder.as_markup()
+
+def jail_article_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура для выбора статьи (используем номера статей из JAIL_ARTICLES)"""
+    builder = InlineKeyboardBuilder()
+    for art_num in JAIL_ARTICLES.keys():  # JAIL_ARTICLES должен быть импортирован из части 1.1
+        builder.button(text=f"Статья {art_num}", callback_data=f"jail_article_{art_num}", color="primary")
+    builder.button(text="❌ Отмена", callback_data="jail_cancel", color="danger")
+    builder.adjust(3)
+    return builder.as_markup()
+
+def task_detail_keyboard(task_id: int, button_link: str = None) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    if button_link:
+        builder.button(text="📢 Перейти в канал", url=button_link, color="primary")
+    builder.button(text="✅ Проверить подписку", callback_data=f"check_task_{task_id}", color="success")
+    builder.button(text="◀️ Назад", callback_data="tasks_back", color="secondary")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def giveaway_condition_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⏰ По времени", callback_data="giveaway_cond_time", color="primary")
+    builder.button(text="👥 По количеству участников", callback_data="giveaway_cond_participants", color="primary")
+    return builder.as_markup()
+
+def promo_type_keyboard() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="💰 MLB", callback_data="promo_type_coins", color="primary")
+    builder.button(text="₿ Биткоины", callback_data="promo_type_bitcoin", color="primary")
+    return builder.as_markup()
+
+def reset_stats_confirm_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Подтвердить сброс", callback_data=f"reset_stats_confirm_{user_id}", color="danger")
+    builder.button(text="❌ Отмена", callback_data="reset_stats_cancel", color="secondary")
+    return builder.as_markup()
+
+def purchase_action_keyboard(purchase_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Выполнено", callback_data=f"purchase_done_{purchase_id}", color="success")
+    builder.button(text="❌ Отказ", callback_data=f"purchase_reject_{purchase_id}", color="danger")
+    return builder.as_markup()
+
+def settings_param_keyboard(params: List[Tuple[str, str]], category: str) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    for key, desc in params:
+        builder.button(text=desc, callback_data=f"edit_{key}", color="primary")
+    builder.button(text="◀️ Назад", callback_data=f"settings_back_{category}", color="secondary")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def completed_giveaway_detail_keyboard(giveaway_id: int) -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="👀 Посмотреть победителей", callback_data=f"view_completed_{giveaway_id}", color="primary")
+    return builder.as_markup()
+
+# ==================== НОВЫЕ КЛАВИАТУРЫ ДЛЯ ПОДПОЛЬНЫХ БОЁВ ====================
+
+def fighters_keyboard(fighters: List[Dict]) -> InlineKeyboardMarkup:
+    """Клавиатура со списком бойцов для ставки."""
+    builder = InlineKeyboardBuilder()
+    for f in fighters:
+        builder.button(
+            text=f"{f['emoji']} {f['name']} ({f['wins']}-{f['losses']}-{f['draws']})",
+            callback_data=f"fight_fighter_{f['id']}",
+            color="primary"
+        )
+    builder.button(text="❌ Отмена", callback_data="fight_cancel", color="danger")
+    builder.adjust(2)
+    return builder.as_markup()
+
+def fight_bet_amount_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура с быстрыми суммами для ставки."""
+    builder = InlineKeyboardBuilder()
+    for amount in [10, 50, 100, 500, 1000]:
+        builder.button(text=f"{amount} MLB", callback_data=f"fight_amount_{amount}", color="primary")
+    builder.button(text="✏️ Другая сумма", callback_data="fight_amount_custom", color="secondary")
+    builder.button(text="❌ Отмена", callback_data="fight_cancel", color="danger")
+    builder.adjust(3)
+    return builder.as_markup()
+
+def fight_confirm_keyboard() -> InlineKeyboardMarkup:
+    """Клавиатура подтверждения ставки или действия."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Да", callback_data="fight_confirm_yes", color="success")
+    builder.button(text="❌ Нет", callback_data="fight_confirm_no", color="danger")
+    return builder.as_markup()
+
+# ==================== КЛАВИАТУРЫ ДЛЯ АДМИНИСТРИРОВАНИЯ БОЙЦОВ И БОЁВ ====================
+
+def admin_fighters_keyboard(fighters: List[Dict]) -> ReplyKeyboardMarkup:
+    """Клавиатура для списка бойцов (админка)."""
+    builder = ReplyKeyboardBuilder()
+    for f in fighters:
+        builder.row(KeyboardButton(text=f"✏️ {f['emoji']} {f['name']}"))
+    builder.row(KeyboardButton(text="➕ Добавить бойца"))
+    builder.row(KeyboardButton(text="◀️ Назад в админку"))
+    return builder.as_markup(resize_keyboard=True)
+
+def admin_fights_list_keyboard(fights: List[Dict]) -> ReplyKeyboardMarkup:
+    """Клавиатура для списка запланированных боёв."""
+    builder = ReplyKeyboardBuilder()
+    for f in fights:
+        # В fights уже должны быть названия бойцов из запроса
+        text = f"🥊 Бой #{f['id']}: {f.get('fighter1_emoji', '')}{f.get('fighter1_name', '')} vs {f.get('fighter2_emoji', '')}{f.get('fighter2_name', '')}"
+        builder.row(KeyboardButton(text=text))
+    builder.row(KeyboardButton(text="➕ Создать бой"))
+    builder.row(KeyboardButton(text="◀️ Назад в админку"))
+    return builder.as_markup(resize_keyboard=True)
+
+def fighter_edit_fields_keyboard(fighter_id: int) -> InlineKeyboardMarkup:
+    """Инлайн-клавиатура для выбора поля для редактирования бойца."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="Имя", callback_data=f"fighter_edit_name_{fighter_id}", color="primary")
+    builder.button(text="Эмодзи", callback_data=f"fighter_edit_emoji_{fighter_id}", color="primary")
+    builder.button(text="Описание", callback_data=f"fighter_edit_desc_{fighter_id}", color="primary")
+    builder.button(text="Ключ картинки", callback_data=f"fighter_edit_image_{fighter_id}", color="primary")
+    builder.button(text="❌ Удалить бойца", callback_data=f"fighter_delete_{fighter_id}", color="danger")
+    builder.button(text="◀️ Назад", callback_data="admin_fight_back", color="secondary")
+    builder.adjust(1)
+    return builder.as_markup()
+
+def fight_result_keyboard(fight_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура для выбора результата боя."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🥇 Победа бойца 1", callback_data=f"fight_result_win1_{fight_id}", color="primary")
+    builder.button(text="🥈 Победа бойца 2", callback_data=f"fight_result_win2_{fight_id}", color="primary")
+    builder.button(text="🤝 Ничья", callback_data=f"fight_result_draw_{fight_id}", color="secondary")
+    builder.button(text="◀️ Назад", callback_data="admin_fight_back", color="danger")
+    builder.adjust(1)
+    return builder.as_markup()
+
+# ==================== КОНЕЦ ЧАСТИ 2 ====================
