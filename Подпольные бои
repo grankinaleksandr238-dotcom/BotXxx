@@ -5345,3 +5345,371 @@ async def bet_cancel_callback(callback: CallbackQuery, state: FSMContext):
     await underground_fights_menu(callback.message)
 
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
+# ==================== ЧАСТЬ 4: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ – РУЛЕТКА, ПОВТОР СТАВОК ====================
+
+# ==================== РУЛЕТКА ====================
+@dp.message(F.text == "🎡 Рулетка")
+async def roulette_start(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        await message.answer("⛔ Вы заблокированы.")
+        return
+    min_level = await get_setting_int("min_level_casino")
+    level = await get_user_level(user_id)
+    if level < min_level:
+        await message.answer(f"❌ Для этой игры нужен {min_level} уровень. Твой уровень: {level}")
+        return
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    await message.answer("Введи сумму ставки (можно дробную):", reply_markup=back_keyboard())
+    await state.set_state(RouletteBet.amount)
+
+@dp.message(RouletteBet.amount, F.text)
+async def roulette_bet_amount(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await casino_menu(message)
+        return
+
+    ok, remaining = await check_global_cooldown(message.from_user.id, "roulette")
+    if not ok:
+        await message.answer(f"⏳ Подожди ещё {remaining} сек.")
+        await state.clear()
+        return
+
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    min_bet = await get_setting_float("casino_min_bet")
+    max_bet = await get_setting_float("casino_max_bet")
+    max_input = await get_setting_float("max_input_number")
+    if amount < min_bet:
+        await message.answer(f"❌ Минимальная ставка {min_bet:.2f} MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_bet:
+        await message.answer(f"❌ Максимальная ставка {max_bet:.2f}.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > max_input:
+        await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+        await state.clear()
+        await casino_menu(message)
+        return
+    if amount > balance:
+        await message.answer("❌ Недостаточно MLB.")
+        await state.clear()
+        await casino_menu(message)
+        return
+    await state.update_data(amount=amount)
+    await message.answer("Выбери тип ставки:", reply_markup=roulette_type_keyboard())
+    await state.set_state(RouletteBet.bet_type)
+
+@dp.callback_query(RouletteBet.bet_type, F.data.startswith("roulette_type_"))
+async def roulette_type_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    bet_type = callback.data.split("_")[2]
+    if bet_type == "number":
+        await callback.message.edit_text("Выбери число от 0 до 36:", reply_markup=roulette_number_keyboard())
+        await state.set_state(RouletteBet.number)
+    else:
+        await state.update_data(bet_type=bet_type, number=None)
+        await process_roulette_bet(callback.message, state, callback.from_user.id)
+
+@dp.callback_query(RouletteBet.number, F.data.startswith("roulette_num_"))
+async def roulette_number_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    number = int(callback.data.split("_")[2])
+    await state.update_data(bet_type='number', number=number)
+    await process_roulette_bet(callback.message, state, callback.from_user.id)
+
+@dp.callback_query(RouletteBet.bet_type, F.data == "roulette_cancel")
+@dp.callback_query(RouletteBet.number, F.data == "roulette_cancel")
+async def roulette_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await casino_menu(callback.message)
+
+async def process_roulette_bet(message: Message, state: FSMContext, user_id: int):
+    data = await state.get_data()
+    amount = data['amount']
+    bet_type = data['bet_type']
+    bet_number = data.get('number')
+    anim = await message.answer("🎡 Крутим рулетку...")
+    for _ in range(3):
+        await asyncio.sleep(0.5)
+        await anim.edit_text("🎡 • •")
+        await asyncio.sleep(0.5)
+        await anim.edit_text("• 🎡 •")
+        await asyncio.sleep(0.5)
+        await anim.edit_text("• • 🎡")
+
+    number = random.randint(0, 36)
+    color = 'зелёное' if number == 0 else ('красное' if number % 2 == 0 else 'чёрное')
+
+    # Определяем выигрыш
+    if bet_type == 'number':
+        win = number == bet_number
+    elif bet_type == 'red':
+        win = color == 'красное'
+    elif bet_type == 'black':
+        win = color == 'чёрное'
+    elif bet_type == 'green':
+        win = color == 'зелёное'
+    else:
+        win = False
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await message.answer("❌ Ошибка при списании ставки.")
+                await state.clear()
+                return
+            await update_user_game_stats(user_id, 'roulette', win, conn=conn)
+            if win:
+                if bet_type == 'number':
+                    multiplier = await get_setting_float("roulette_number_multiplier")
+                elif bet_type == 'green':
+                    multiplier = await get_setting_float("roulette_green_multiplier")
+                else:
+                    multiplier = await get_setting_float("roulette_color_multiplier")
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_roulette_win")
+                phrase = f"🎡 Выпало {number} {color}! Ты выиграл {profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_roulette_lose")
+                phrase = f"🎡 Выпало {number} {color}. Твоя ставка не сыграла. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'bet_type': bet_type, 'number': bet_number}
+    await save_last_bet(user_id, 'roulette', amount, bet_data)
+    await set_global_cooldown(user_id, "roulette")
+
+    await anim.edit_text(phrase, reply_markup=repeat_bet_keyboard('roulette'))
+    await state.clear()
+
+# ==================== ПОВТОР СТАВКИ ====================
+@dp.callback_query(F.data.startswith("repeat_"))
+async def repeat_bet_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    game = callback.data.split("_")[1]
+    user_id = callback.from_user.id
+    await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
+
+    ok, remaining = await check_global_cooldown(user_id, game)
+    if not ok:
+        await callback.answer(f"⏳ Подожди ещё {remaining} сек.", show_alert=True)
+        return
+
+    async with db_pool.acquire() as conn:
+        last = await conn.fetchrow(
+            "SELECT bet_amount, bet_data FROM user_last_bets WHERE user_id=$1 AND game=$2",
+            user_id, game
+        )
+        if not last:
+            await callback.answer("У тебя нет сохранённой ставки для этой игры.", show_alert=True)
+            return
+
+        amount = float(last['bet_amount'])
+        bet_data = json.loads(last['bet_data']) if last['bet_data'] else {}
+
+    balance = await get_user_balance(user_id)
+    if amount > balance:
+        await callback.answer("❌ Недостаточно MLB для повтора ставки.", show_alert=True)
+        return
+
+    chat_id = callback.message.chat.id
+
+    if game == 'dice':
+        await process_dice_repeat(user_id, amount, chat_id)
+    elif game == 'guess' and 'number' in bet_data:
+        number = bet_data['number']
+        await process_guess_repeat(user_id, amount, number, chat_id)
+    elif game == 'slots':
+        await process_slots_repeat(user_id, amount, chat_id)
+    elif game == 'roulette' and 'bet_type' in bet_data:
+        bet_type = bet_data['bet_type']
+        number = bet_data.get('number')
+        await process_roulette_repeat(user_id, amount, bet_type, number, chat_id)
+    else:
+        await callback.answer("Нет данных для повтора.", show_alert=True)
+        return
+
+    await set_global_cooldown(user_id, game)
+
+async def process_dice_repeat(user_id: int, amount: float, chat_id: int):
+    dice1 = random.randint(1, 6)
+    dice2 = random.randint(1, 6)
+    total = dice1 + dice2
+    win_chance = await get_setting_float("casino_win_chance")
+    win = random.random() * 100 <= win_chance
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'dice', win, conn=conn)
+            if win:
+                multiplier = 2.0
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_dice_win")
+                phrase = f"🎲 {dice1} + {dice2} = {total} — Победа! +{profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_dice_lose")
+                phrase = f"🎲 {dice1} + {dice2} = {total} — Проигрыш. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    await save_last_bet(user_id, 'dice', amount)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('dice'))
+
+async def process_guess_repeat(user_id: int, amount: float, number: int, chat_id: int):
+    win_chance = await get_setting_float("casino_win_chance")
+    win = random.random() * 100 <= win_chance
+    secret = random.randint(1, 5)
+
+    multiplier = 2.0
+    rep_reward = 1
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'guess', win, conn=conn)
+            if win:
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                await update_user_reputation(user_id, rep_reward, conn=conn)
+                exp = await get_setting_int("exp_per_guess_win")
+                phrase = f"🔢 Ты угадал! Было {secret}. Выигрыш: +{profit:.2f} MLB и +{rep_reward} репутации!"
+            else:
+                exp = await get_setting_int("exp_per_guess_lose")
+                phrase = f"🔢 Не угадал. Было {secret}. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'number': number}
+    await save_last_bet(user_id, 'guess', amount, bet_data)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('guess'))
+
+async def process_slots_repeat(user_id: int, amount: float, chat_id: int):
+    win_prob = await get_setting_float("slots_win_probability")
+    win = random.random() * 100 <= win_prob
+    symbols = ['🍒', '🍋', '🍊', '7️⃣', '💎']
+    result = [random.choice(symbols) for _ in range(3)]
+    if win:
+        if random.random() < 0.1:
+            result = [random.choice(symbols) for _ in range(3)]
+            result[0] = result[1] = result[2] = random.choice(symbols)
+        else:
+            result = [random.choice(symbols) for _ in range(3)]
+    result_str = " | ".join(result)
+
+    if win and result[0] == result[1] == result[2]:
+        if result[0] == '7️⃣':
+            multiplier = await get_setting_float("slots_multiplier_seven")
+        elif result[0] == '💎':
+            multiplier = await get_setting_float("slots_multiplier_diamond")
+        else:
+            multiplier = await get_setting_float("slots_multiplier_three")
+    elif win:
+        multiplier = 2.0
+    else:
+        multiplier = 0
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'slots', win, conn=conn)
+            if win:
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_slots_win")
+                phrase = f"🍒 {result_str} — Ура! Выигрыш x{multiplier:.1f}! +{profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_slots_lose")
+                phrase = f"🍒 {result_str} — Не повезло. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    await save_last_bet(user_id, 'slots', amount)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('slots'))
+
+async def process_roulette_repeat(user_id: int, amount: float, bet_type: str, number: int, chat_id: int):
+    spin = random.randint(0, 36)
+    color = 'зелёное' if spin == 0 else ('красное' if spin % 2 == 0 else 'чёрное')
+
+    if bet_type == 'number':
+        win = spin == number
+    elif bet_type == 'red':
+        win = color == 'красное'
+    elif bet_type == 'black':
+        win = color == 'чёрное'
+    elif bet_type == 'green':
+        win = color == 'зелёное'
+    else:
+        win = False
+
+    async with db_pool.acquire() as conn:
+        async with conn.transaction():
+            success, new_balance, _ = await update_user_balance(user_id, -amount, conn=conn, allow_negative=False)
+            if not success:
+                await bot.send_message(chat_id, "❌ Ошибка при списании ставки.")
+                return
+            await update_user_game_stats(user_id, 'roulette', win, conn=conn)
+            if win:
+                if bet_type == 'number':
+                    multiplier = await get_setting_float("roulette_number_multiplier")
+                elif bet_type == 'green':
+                    multiplier = await get_setting_float("roulette_green_multiplier")
+                else:
+                    multiplier = await get_setting_float("roulette_color_multiplier")
+                profit = amount * multiplier
+                await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
+                exp = await get_setting_int("exp_per_roulette_win")
+                phrase = f"🎡 Выпало {spin} {color}! Ты выиграл {profit:.2f} MLB!"
+            else:
+                exp = await get_setting_int("exp_per_roulette_lose")
+                phrase = f"🎡 Выпало {spin} {color}. Твоя ставка не сыграла. -{amount:.2f} MLB."
+            level_up_msg = await add_exp(user_id, exp, conn=conn)
+
+    if level_up_msg:
+        asyncio.create_task(safe_send_message(user_id, level_up_msg))
+
+    bet_data = {'bet_type': bet_type, 'number': number}
+    await save_last_bet(user_id, 'roulette', amount, bet_data)
+    await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('roulette'))
+
+# ==================== КОНЕЦ ЧАСТИ 4 ====================
