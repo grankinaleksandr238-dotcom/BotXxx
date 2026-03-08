@@ -3846,7 +3846,7 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
 
     # Новая категория: Подпольные бои
     if "manage_fights" in permissions:
-        builder.row(KeyboardButton(text="🥊 Подпольные бои"))
+        builder.row(KeyboardButton(text="🥊Упарвдение боями"))
 
     builder.row(KeyboardButton(text="◀️ Назад в главное меню"))
     return builder.as_markup(resize_keyboard=True)
@@ -9944,7 +9944,7 @@ async def complete_giveaway_manual_winners(message: Message, state: FSMContext):
 
 # ==================== ПОДПОЛЬНЫЕ БОИ (АДМИНКА) ====================
 
-@dp.message(F.text == "🥊 Подпольные бои")
+@dp.message(F.text == "🥊Упарвдение боями")
 async def admin_fights_menu(message: Message):
     """Главное меню управления подпольными боями."""
     if not await check_admin_permissions(message.from_user.id, "manage_fights"):
