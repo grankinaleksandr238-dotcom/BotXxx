@@ -10758,20 +10758,20 @@ async def create_fight_confirm(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     try:
         fight_id = await create_fight(
-    fighter1_id=data['fighter1_id'],
-    fighter2_id=data['fighter2_id'],
-    start_time=data['start_time'],
-    duration_minutes=data['duration'],
-    commission_percent=await get_setting_int("fight_commission_percent"),
-    created_by=callback.from_user.id
-)
+            fighter1_id=data['fighter1_id'],
+            fighter2_id=data['fighter2_id'],
+            start_time=data['start_time'],
+            duration_minutes=data['duration'],
+            commission_percent=await get_setting_int("fight_commission_percent"),
+            created_by=callback.from_user.id
+        )
 
-async with db_pool.acquire() as conn:
-    await conn.execute("UPDATE fights SET status='active', start_time=NOW() WHERE id=$1", fight_id)
+        async with db_pool.acquire() as conn:
+            await conn.execute("UPDATE fights SET status='active', start_time=NOW() WHERE id=$1", fight_id)
 
-f1 = await get_fighter(data['fighter1_id'])
-f2 = await get_fighter(data['fighter2_id'])
-if f1 and f2:
+        f1 = await get_fighter(data['fighter1_id'])
+        f2 = await get_fighter(data['fighter2_id'])
+        if f1 and f2:
     text = get_random_phrase(FIGHT_START_PHRASES, name1=f1['name'], name2=f2['name'])
     confirmed = await get_confirmed_chats()
     for chat_id in confirmed.keys():
