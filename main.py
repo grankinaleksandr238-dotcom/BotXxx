@@ -5377,7 +5377,204 @@ async def slots_bet(message: Message, state: FSMContext):
 
     await anim.edit_text(phrase, reply_markup=repeat_bet_keyboard('slots'))
     await state.clear()
+# ==================== ПОДПОЛЬНЫЕ БОИ (ПОЛЬЗОВАТЕЛЬСКОЕ МЕНЮ) ====================
+@dp.message(F.text == "🥊 Подпольные бои")
+async def underground_fights_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
 
+    # Получаем активные бои
+    fights = await get_active_fights()
+    if not fights:
+        await message.answer("🥊 Сейчас нет активных боёв. Загляни позже!", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        return
+
+    # Для каждого боя подготовим информацию
+    text = "🥊 <b>Активные бои:</b>\n\n"
+    kb = InlineKeyboardBuilder()
+    for fight in fights:
+        f1 = await get_fighter(fight['fighter1_id'])
+        f2 = await get_fighter(fight['fighter2_id'])
+        if not f1 or not f2:
+            continue
+        # Рассчитываем текущие коэффициенты
+        total1 = float(fight['total_bets_fighter1'])
+        total2 = float(fight['total_bets_fighter2'])
+        commission = fight['commission_percent']
+        odds1 = calculate_odds(total1, total2, commission, True)
+        odds2 = calculate_odds(total1, total2, commission, False)
+        time_left = (fight['end_time'] - datetime.now()).total_seconds()
+        time_str = format_time_remaining(int(time_left)) if time_left > 0 else "завершается"
+        text += f"🆔 {fight['id']}: {f1['name']} vs {f2['name']}\n"
+        text += f"⏳ До конца: {time_str}\n"
+        text += f"📊 Коэф: {f1['name']} – {odds1:.2f}, {f2['name']} – {odds2:.2f}\n"
+        text += f"💰 Пул: {total1+total2:.2f} MLB\n\n"
+        kb.button(text=f"🥊 Бой #{fight['id']}", callback_data=f"fight_view_{fight['id']}")
+    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="fights_back"))
+    await message.answer(text, reply_markup=kb.as_markup())
+
+# ==================== ОБРАБОТЧИКИ ДЛЯ ПОДПОЛЬНЫХ БОЁВ (ПРОДОЛЖЕНИЕ) ====================
+
+@dp.callback_query(F.data.startswith("fight_view_"))
+async def fight_view_callback(callback: CallbackQuery):
+    fight_id = int(callback.data.split("_")[2])
+    fight = await get_fight(fight_id)
+    if not fight or fight['status'] != 'active':
+        await callback.answer("❌ Бой не найден или уже завершён.", show_alert=True)
+        return
+    f1 = await get_fighter(fight['fighter1_id'])
+    f2 = await get_fighter(fight['fighter2_id'])
+    if not f1 or not f2:
+        await callback.answer("❌ Ошибка загрузки данных бойцов.", show_alert=True)
+        return
+    total1 = float(fight['total_bets_fighter1'])
+    total2 = float(fight['total_bets_fighter2'])
+    commission = fight['commission_percent']
+    odds1 = calculate_odds(total1, total2, commission, True)
+    odds2 = calculate_odds(total1, total2, commission, False)
+    time_left = (fight['end_time'] - datetime.now()).total_seconds()
+    time_str = format_time_remaining(int(time_left)) if time_left > 0 else "завершается"
+
+    text = (
+        f"🥊 <b>Бой #{fight_id}</b>\n\n"
+        f"<b>{f1['name']}</b> vs <b>{f2['name']}</b>\n"
+        f"⏳ Осталось: {time_str}\n"
+        f"📊 Коэффициенты:\n"
+        f"   {f1['name']}: {odds1:.2f}\n"
+        f"   {f2['name']}: {odds2:.2f}\n"
+        f"💰 Общий пул: {total1+total2:.2f} MLB\n\n"
+        f"Выбери, на кого поставишь:"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{f1['name']} ({odds1:.2f})", callback_data=f"bet_fighter_{fight_id}_{fight['fighter1_id']}"),
+         InlineKeyboardButton(text=f"{f2['name']} ({odds2:.2f})", callback_data=f"bet_fighter_{fight_id}_{fight['fighter2_id']}")],
+        [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="fights_back")]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb)
+    await callback.answer()
+
+@dp.callback_query(F.data == "fights_back")
+async def fights_back_callback(callback: CallbackQuery):
+    # Возвращаемся к меню подпольных боёв
+    user_id = callback.from_user.id
+    fights = await get_active_fights()
+    if not fights:
+        await callback.message.edit_text("🥊 Сейчас нет активных боёв.", reply_markup=None)
+        return
+    text = "🥊 <b>Активные бои:</b>\n\n"
+    kb = InlineKeyboardBuilder()
+    for fight in fights:
+        f1 = await get_fighter(fight['fighter1_id'])
+        f2 = await get_fighter(fight['fighter2_id'])
+        if not f1 or not f2:
+            continue
+        total1 = float(fight['total_bets_fighter1'])
+        total2 = float(fight['total_bets_fighter2'])
+        commission = fight['commission_percent']
+        odds1 = calculate_odds(total1, total2, commission, True)
+        odds2 = calculate_odds(total1, total2, commission, False)
+        time_left = (fight['end_time'] - datetime.now()).total_seconds()
+        time_str = format_time_remaining(int(time_left)) if time_left > 0 else "завершается"
+        text += f"🆔 {fight['id']}: {f1['name']} vs {f2['name']}\n"
+        text += f"⏳ До конца: {time_str}\n"
+        text += f"📊 Коэф: {f1['name']} – {odds1:.2f}, {f2['name']} – {odds2:.2f}\n"
+        text += f"💰 Пул: {total1+total2:.2f} MLB\n\n"
+        kb.button(text=f"🥊 Бой #{fight['id']}", callback_data=f"fight_view_{fight['id']}")
+    kb.adjust(1)
+    kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="fights_back"))
+    await callback.message.edit_text(text, reply_markup=kb.as_markup())
+
+@dp.callback_query(F.data.startswith("bet_fighter_"))
+async def bet_fighter_callback(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    fight_id = int(parts[2])
+    fighter_id = int(parts[3])
+    await state.update_data(fight_id=fight_id, fighter_id=fighter_id)
+    await callback.message.answer("💰 Введи сумму ставки (можно дробное число):", reply_markup=back_keyboard())
+    await state.set_state(PlaceBet.amount)
+    await callback.answer()
+
+@dp.message(PlaceBet.amount, F.text)
+async def bet_amount_handler(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await underground_fights_menu(message)
+        return
+    try:
+        amount = float(message.text)
+        if amount <= 0:
+            raise ValueError
+        amount = round(amount, 2)
+        max_input = await get_setting_float("max_input_number")
+        if amount > max_input:
+            await message.answer(f"❌ Сумма слишком большая (максимум {max_input:.2f}).")
+            return
+    except ValueError:
+        await message.answer("❌ Введи положительное число.")
+        return
+    data = await state.get_data()
+    fight_id = data['fight_id']
+    fighter_id = data['fighter_id']
+    fight = await get_fight(fight_id)
+    if not fight or fight['status'] != 'active':
+        await message.answer("❌ Бой уже завершён или не найден.")
+        await state.clear()
+        return
+    await state.update_data(amount=amount)
+    total1 = float(fight['total_bets_fighter1'])
+    total2 = float(fight['total_bets_fighter2'])
+    commission = fight['commission_percent']
+    odds = calculate_odds(total1, total2, commission, fighter_id == fight['fighter1_id'])
+    text = (
+        f"📝 Подтверждение ставки:\n"
+        f"💰 Сумма: {amount:.2f} MLB\n"
+        f"📊 Коэффициент: {odds:.2f}\n"
+        f"💸 Возможный выигрыш: {amount * odds:.2f} MLB\n\n"
+        f"Подтверждаешь?"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Да", callback_data=f"bet_confirm_{fight_id}")],
+        [InlineKeyboardButton(text="❌ Нет", callback_data="bet_cancel")]
+    ])
+    await message.answer(text, reply_markup=kb)
+    await state.set_state(PlaceBet.confirm)
+
+@dp.callback_query(PlaceBet.confirm, F.data.startswith("bet_confirm_"))
+async def bet_confirm_callback(callback: CallbackQuery, state: FSMContext):
+    fight_id = int(callback.data.split("_")[2])
+    data = await state.get_data()
+    if data.get('fight_id') != fight_id:
+        await callback.answer("❌ Данные устарели.", show_alert=True)
+        await state.clear()
+        return
+    amount = data['amount']
+    fighter_id = data['fighter_id']
+    user_id = callback.from_user.id
+
+    success, msg, odds = await place_bet(user_id, fight_id, fighter_id, amount)
+    if success:
+        await callback.message.edit_text(msg)
+    else:
+        await callback.message.edit_text(msg)
+    await state.clear()
+    await callback.answer()
+
+@dp.callback_query(PlaceBet.confirm, F.data == "bet_cancel")
+async def bet_cancel_callback(callback: CallbackQuery, state: FSMContext):
+    await callback.answer("❌ Отменено")
+    await state.clear()
+    await underground_fights_menu(callback.message)
+
+# ==================== КОНЕЦ ЧАСТИ 3 ====================
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
 # ==================== ЧАСТЬ 4: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ – РУЛЕТКА, ПОВТОР СТАВОК ====================
 
