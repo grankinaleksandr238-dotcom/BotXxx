@@ -1606,7 +1606,7 @@ async def init_db():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_reputation ON users(reputation DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_bitcoin_balance ON users(bitcoin_balance DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_level_desc ON users(level DESC)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)")  -- НОВЫЙ
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_users_last_active ON users(last_active)")  
 
         await migrate_date_columns(conn)
 
