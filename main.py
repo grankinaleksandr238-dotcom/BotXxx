@@ -4053,7 +4053,7 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
 
     # Новая категория: Подпольные бои
     if "manage_fights" in permissions:
-        builder.row(KeyboardButton(text="🥊 Управление боями"))  # переименовано для ясности
+        builder.row(KeyboardButton(text="Управление боями"))  # переименовано для ясности
 
     builder.row(KeyboardButton(text="◀️ Назад в главное меню"))
     return builder.as_markup(resize_keyboard=True)
@@ -10160,7 +10160,7 @@ async def complete_giveaway_manual_winners(message: Message, state: FSMContext):
 
 # ==================== ПОДПОЛЬНЫЕ БОИ (АДМИНКА) ====================
 
-@dp.message(F.text == "🥊 Управление боями")  # переименовано
+@dp.message(F.text == "Управление боями")  # переименовано
 async def admin_fights_menu(message: Message):
     """Главное меню управления подпольными боями."""
     if message.chat.type != 'private':
