@@ -10772,31 +10772,20 @@ async def create_fight_confirm(callback: CallbackQuery, state: FSMContext):
         f1 = await get_fighter(data['fighter1_id'])
         f2 = await get_fighter(data['fighter2_id'])
         if f1 and f2:
-    text = get_random_phrase(FIGHT_START_PHRASES, name1=f1['name'], name2=f2['name'])
-    confirmed = await get_confirmed_chats()
-    for chat_id in confirmed.keys():
-        try:
-            await bot.send_message(chat_id, text)
-        except Exception as e:
-            logging.error(f"Failed to send fight announcement to chat {chat_id}: {e}")
-        # Сразу отправляем уведомление во все подтверждённые чаты
-        f1 = await get_fighter(data['fighter1_id'])
-        f2 = await get_fighter(data['fighter2_id'])
-        if f1 and f2:
             text = get_random_phrase(FIGHT_START_PHRASES, name1=f1['name'], name2=f2['name'])
-            # Отправляем во все чаты
             confirmed = await get_confirmed_chats()
             for chat_id in confirmed.keys():
                 try:
-                    msg = await bot.send_message(chat_id, text)
-                    # Сохраняем chat_id и message_id для последующего обновления (опционально)
-                    # await update_fight_message(fight_id, chat_id, msg.message_id)
+                    await bot.send_message(chat_id, text)
                 except Exception as e:
                     logging.error(f"Failed to send fight announcement to chat {chat_id}: {e}")
+
         await callback.message.edit_text(f"✅ Бой успешно создан! ID: {fight_id}. Объявление разослано по чатам.")
+
     except Exception as e:
         logging.error(f"Create fight error: {e}")
         await callback.message.edit_text("❌ Ошибка при создании боя.")
+
     await state.clear()
 
 @dp.callback_query(CreateFight.confirm, F.data == "fight_create_cancel")
