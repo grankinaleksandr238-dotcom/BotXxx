@@ -2133,7 +2133,7 @@ async def set_global_cooldown(user_id: int, command: str, cooldown_seconds: int 
 
 # ==================== ФУНКЦИИ ДЛЯ БИЗНЕСОВ (ПРОДОЛЖЕНИЕ) ====================
 @db_retry()
-async def get_business_type_list(only_available: bool = True) -> List[dict]:
+async def get_business_types_list(only_available: bool = True) -> List[dict]:
     async with db_pool.acquire() as conn:
         if only_available:
             rows = await conn.fetch("SELECT * FROM business_types WHERE available = TRUE ORDER BY base_price_btc")
@@ -2148,7 +2148,7 @@ async def get_business_type_list(only_available: bool = True) -> List[dict]:
         return result
 
 @db_retry()
-async def get_business_type(business_type_id: int) -> Optional[dict]:
+async def get_business_types(business_type_id: int) -> Optional[dict]:
     async with db_pool.acquire() as conn:
         row = await conn.fetchrow("SELECT * FROM business_types WHERE id=$1", business_type_id)
         if row:
