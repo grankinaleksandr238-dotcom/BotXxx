@@ -6336,7 +6336,7 @@ async def promo_handler(message: Message, state: FSMContext):
         await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
         return
     await send_with_media(user_id, "Введи промокод:", media_key='promo', reply_markup=back_keyboard())
-    await PromoActivate.code.set()
+    await state.set_state(PromoActivate.code)
 
 @dp.message(PromoActivate.code, F.text)
 async def promo_activate(message: Message, state: FSMContext):
