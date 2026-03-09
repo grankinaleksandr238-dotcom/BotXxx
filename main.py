@@ -18,6 +18,7 @@ from functools import lru_cache, wraps
 from cachetools import TTLCache  # для ThrottlingMiddleware
 
 import asyncpg
+from aiogram.fsm.storage.redis import RedisStorage
 from aiogram import Bot, Dispatcher, types, BaseMiddleware, F
 from aiogram.filters import Command, CommandStart, StateFilter
 from aiogram.fsm.context import FSMContext
@@ -76,7 +77,10 @@ if REDIS_URL:
 
 # ==================== СОЗДАНИЕ БОТА ====================
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
-storage = MemoryStorage()
+if redis_client:
+    storage = RedisStorage(redis_client)
+else:
+    storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # ==================== КЕШИРОВАНИЕ С ПРОВЕРКОЙ НА НАЛИЧИЕ REDIS ====================
