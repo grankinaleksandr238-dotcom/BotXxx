@@ -4416,9 +4416,13 @@ def betray_choice_keyboard(heist_id: int, target_id: int, target_name: str, targ
     ])
 
 def heist_join_keyboard(heist_id: int) -> InlineKeyboardMarkup:
-    """Кнопка для участия в налёте."""
+    """Кнопка для участия в налёте с синим стилем."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💰 Участвовать в налёте", callback_data=f"heist_join_{heist_id}")]
+        [InlineKeyboardButton(
+            text="💰 Участвовать в налёте",
+            callback_data=f"heist_join_{heist_id}",
+            style="primary"   # 🔵 синяя кнопка
+        )]
     ])
 
 def jail_cell_keyboard() -> InlineKeyboardMarkup:
