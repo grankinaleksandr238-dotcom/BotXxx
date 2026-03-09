@@ -11,6 +11,8 @@ import io
 import json
 import hashlib
 import sys
+from dotenv import load_dotenv
+load_dotenv()
 from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple, Any, Union
 from collections import defaultdict
