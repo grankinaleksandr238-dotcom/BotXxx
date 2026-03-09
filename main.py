@@ -4051,7 +4051,7 @@ def main_menu_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text="🎁 Розыгрыши")
     )
     builder.row(
-        KeyboardButton(text="Отмыть BTC"),
+        KeyboardButton(text="🏪 Отмыть BTC"),
         KeyboardButton(text="💼 Биткоин-биржа"),
         KeyboardButton(text="🥊 Подпольные бои")
     )
