@@ -4426,18 +4426,25 @@ def heist_join_keyboard(heist_id: int) -> InlineKeyboardMarkup:
     ])
 
 def jail_cell_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора камеры с кнопкой отмены"""
+    """Клавиатура выбора камеры: синие номера, красная отмена."""
     kb = []
     row = []
     for i in range(1, 16):
-        row.append(InlineKeyboardButton(text=str(i), callback_data=f"jail_cell_{i}"))
+        row.append(InlineKeyboardButton(
+            text=str(i),
+            callback_data=f"jail_cell_{i}",
+            style="primary"   # 🔵 синий
+        ))
         if len(row) == 5:
             kb.append(row)
             row = []
     if row:
         kb.append(row)
-    # Добавляем кнопку отмены
-    kb.append([InlineKeyboardButton(text="❌ Отмена", callback_data="jail_cancel")])
+    kb.append([InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data="jail_cancel",
+        style="danger"        # 🔴 красный
+    )])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def task_detail_keyboard(task_id: int, button_link: str = None) -> InlineKeyboardMarkup:
