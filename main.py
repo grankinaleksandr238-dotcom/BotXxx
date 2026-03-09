@@ -2381,14 +2381,16 @@ async def add_participant_to_heist(heist_id: int, user_id: int, share: float) ->
     """Добавляет участника в налёт, возвращает True, если успешно (не было конфликта)."""
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            result = await conn.execute("""
+            # Пытаемся вставить, возвращаем user_id только если вставка удалась
+            inserted = await conn.fetchval("""
                 INSERT INTO heist_participants (heist_id, user_id, base_share, current_share, defense_bonus, joined_at)
                 VALUES ($1, $2, $3, $3, 0, $4)
                 ON CONFLICT (heist_id, user_id) DO NOTHING
+                RETURNING user_id
             """, heist_id, user_id, share, datetime.now())
-            # Проверяем, была ли вставка
-            if result == "INSERT 0 1":
-                # Обновляем общий банк
+            
+            if inserted is not None:
+                # Обновляем общий банк налёта
                 await conn.execute(
                     "UPDATE heists SET total_pot = total_pot + $1, remaining_pot = remaining_pot + $1 WHERE id=$2",
                     share, heist_id
