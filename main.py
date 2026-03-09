@@ -5494,15 +5494,73 @@ async def fights_back_callback(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=kb.as_markup())
 
 @dp.callback_query(F.data.startswith("bet_fighter_"))
-async def bet_fighter_callback(callback: CallbackQuery, state: FSMContext):
+async def bet_fighter_info_callback(callback: CallbackQuery, state: FSMContext):
+    """Показывает подробную информацию о выбранном бойце перед ставкой."""
     parts = callback.data.split("_")
     fight_id = int(parts[2])
     fighter_id = int(parts[3])
+    
+    # Получаем информацию о бойце
+    fighter = await get_fighter(fighter_id)
+    if not fighter:
+        await callback.answer("❌ Боец не найден", show_alert=True)
+        return
+    
+    # Получаем информацию о бое (для контекста)
+    fight = await get_fight(fight_id)
+    if not fight or fight['status'] != 'active':
+        await callback.answer("❌ Бой уже завершён или не активен", show_alert=True)
+        return
+    
+    # Сохраняем данные в состоянии для следующего шага
     await state.update_data(fight_id=fight_id, fighter_id=fighter_id)
+    
+    # Формируем сообщение с информацией о бойце
+    text = (
+        f"🥊 <b>Информация о бойце</b>\n\n"
+        f"<b>Имя:</b> {fighter['name']}\n"
+        f"<b>Описание:</b>\n{fighter['description']}\n\n"
+        f"<b>Характеристики:</b>\n"
+        f"💪 Сила: {fighter['strength']}\n"
+        f"🏃 Ловкость: {fighter['agility']}\n"
+        f"❤️ Выносливость: {fighter['stamina']}\n"
+        f"📊 Суммарный рейтинг: {fighter['strength'] + fighter['agility'] + fighter['stamina']}\n\n"
+        f"Теперь ты можешь сделать ставку на этого бойца."
+    )
+    
+    # Клавиатура с кнопками "Сделать ставку" и "Назад"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Сделать ставку", callback_data=f"bet_confirm_fighter_{fight_id}_{fighter_id}")],
+        [InlineKeyboardButton(text="◀️ Назад к бою", callback_data=f"fight_view_{fight_id}")]
+    ])
+    
+    # Отправляем сообщение (с фото, если есть)
+    if fighter.get('photo_file_id'):
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            fighter['photo_file_id'],
+            caption=text,
+            reply_markup=kb
+        )
+    else:
+        await callback.message.edit_text(text, reply_markup=kb)
+    
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("bet_confirm_fighter_"))
+async def bet_confirm_fighter_callback(callback: CallbackQuery, state: FSMContext):
+    """Переход к вводу суммы после просмотра информации о бойце."""
+    parts = callback.data.split("_")
+    fight_id = int(parts[3])
+    fighter_id = int(parts[4])
+    
+    # Обновляем данные в состоянии (на всякий случай)
+    await state.update_data(fight_id=fight_id, fighter_id=fighter_id)
+    
     await callback.message.answer("💰 Введи сумму ставки (можно дробное число):", reply_markup=back_keyboard())
     await state.set_state(PlaceBet.amount)
     await callback.answer()
-
+    
 @dp.message(PlaceBet.amount, F.text)
 async def bet_amount_handler(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
