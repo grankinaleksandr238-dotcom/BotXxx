@@ -7206,9 +7206,7 @@ async def cmd_jail(message: Message, state: FSMContext):
         await auto_delete_command(message, "⛔ Вы заблокированы.")
         return
 
-    # Обновляем last_active
     asyncio.create_task(update_user_last_activity(user_id))
-
     await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
 
     ok, not_subscribed = await check_subscription(user_id)
@@ -7216,14 +7214,7 @@ async def cmd_jail(message: Message, state: FSMContext):
         await auto_delete_command(message, "❗️ Для использования тюрьмы необходимо подписаться на каналы.", reply_markup=subscription_inline(not_subscribed))
         return
 
-    # 👇 ДОБАВЛЕННЫЕ СТРОКИ (вставь их сюда)
-    await state.set_state(JailProcess.cell)
-    await state.update_data(chat_id=message.chat.id)
-    # 👆
-
-    # ... далее продолжается твой остальной код (проверка активного срока, кулдауна, автоудаление и отправка сообщения)
-
-    # Убираем глобальный кулдаун чата, оставляем только специфичный кулдаун тюрьмы
+    # Проверка активного срока
     async with db_pool.acquire() as conn:
         active = await conn.fetchval(
             "SELECT 1 FROM jail_sentences WHERE user_id=$1 AND status='serving'",
@@ -7241,28 +7232,31 @@ async def cmd_jail(message: Message, state: FSMContext):
 
     await auto_delete_message(message)
 
+    # ==== ЕДИНСТВЕННОЕ МЕСТО УСТАНОВКИ СОСТОЯНИЯ ====
+    await state.set_state(JailProcess.cell)
+    await state.update_data(chat_id=message.chat.id)
+
     try:
         await bot.send_message(
             user_id,
             "🔒 Выбери номер камеры, в которую хочешь отправиться (от 1 до 15):",
             reply_markup=jail_cell_keyboard()
         )
-        await state.set_state(JailProcess.cell)
-        await state.update_data(chat_id=message.chat.id)
     except Exception as e:
         logging.error(f"Failed to send jail menu to {user_id}: {e}")
         await auto_delete_reply(message, "❌ Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.")
+    
 
 # ==================== ОБРАБОТЧИК ВЫБОРА КАМЕРЫ (ИЗ ЛС) ====================
 @dp.callback_query(F.data.startswith("jail_cell_"))
 async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
     logging.info(f"jail_cell_callback вызван с data: {callback.data}, user_id: {callback.from_user.id}")
     
-    #current_state = await state.get_state()
-    #if current_state != JailProcess.cell:
-        #await callback.answer("❌ Сессия устарела. Начните заново.", show_alert=True)
-        #await state.clear()
-        #return
+    current_state = await state.get_state()
+    if current_state != JailProcess.cell:
+        await callback.answer("❌ Сессия устарела. Начните заново.", show_alert=True)
+        await state.clear()
+        return
     
     try:
         cell = int(callback.data.split("_")[2])
