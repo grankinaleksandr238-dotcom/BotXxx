@@ -6924,27 +6924,33 @@ async def heist_join_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
     chat_id = callback.message.chat.id
 
-    logging.info(f"🔥 heist_join_callback: START для heist_id={heist_id}, user={user_id}, chat={chat_id}")
+    logging.info(f"🔥 heist_join_callback START: heist_id={heist_id}, user={user_id}, chat={chat_id}")
 
     try:
-        # Проверка активации чата
+        # Шаг 1: проверка активации чата
+        logging.info("Шаг 1: проверка активации чата")
         if not await is_chat_confirmed(chat_id):
             logging.warning(f"Чат {chat_id} не активирован")
             await callback.answer("❌ Этот чат не активирован.", show_alert=True)
             return
 
-        # Проверка бана
+        # Шаг 2: проверка бана
+        logging.info("Шаг 2: проверка бана")
         if await is_banned(user_id) and not await is_admin(user_id):
             logging.warning(f"Пользователь {user_id} забанен")
             await callback.answer("⛔ Вы заблокированы.", show_alert=True)
             return
 
-        # Убеждаемся, что пользователь есть в БД
+        # Шаг 3: убеждаемся, что пользователь есть в БД
+        logging.info("Шаг 3: ensure_user_exists")
         await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
 
+        # Шаг 4: начало транзакции
+        logging.info("Шаг 4: начало транзакции")
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                # Получаем налёт с блокировкой
+                # Шаг 5: получаем налёт с блокировкой
+                logging.info("Шаг 5: получение налёта")
                 heist = await conn.fetchrow(
                     "SELECT * FROM heists WHERE id=$1 AND status='joining' AND join_until > NOW() FOR UPDATE",
                     heist_id
@@ -6954,7 +6960,8 @@ async def heist_join_callback(callback: CallbackQuery):
                     await callback.answer("❌ Налёт уже завершён или не найден.", show_alert=True)
                     return
 
-                # Проверка максимального количества участников
+                # Шаг 6: проверка максимального количества участников
+                logging.info("Шаг 6: проверка max_participants")
                 max_participants = await get_setting_int("heist_max_participants")
                 if max_participants > 0:
                     current_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
@@ -6963,7 +6970,8 @@ async def heist_join_callback(callback: CallbackQuery):
                         await callback.answer("❌ В налёте уже максимальное количество участников.", show_alert=True)
                         return
 
-                # Проверка кулдауна участия
+                # Шаг 7: проверка кулдауна участия
+                logging.info("Шаг 7: проверка кулдауна")
                 participant_cooldown = await get_setting_int("heist_participant_cooldown_hours") * 3600
                 ok, remaining = await check_global_cooldown(user_id, "heist_participate", participant_cooldown)
                 if not ok:
@@ -6973,27 +6981,46 @@ async def heist_join_callback(callback: CallbackQuery):
                     )
                     return
 
+                # Шаг 8: расчёт доли
+                logging.info("Шаг 8: расчёт доли")
                 share_min = await get_setting_int("heist_share_min")
                 share_max = await get_setting_int("heist_share_max")
                 share = random.randint(share_min, share_max)
 
-                # Добавляем участника
-                success = await add_participant_to_heist(heist_id, user_id, share)
-                if not success:
+                # Шаг 9: добавление участника (исправленная функция)
+                logging.info("Шаг 9: добавление участника")
+                inserted = await conn.fetchval("""
+                    INSERT INTO heist_participants (heist_id, user_id, base_share, current_share, defense_bonus, joined_at)
+                    VALUES ($1, $2, $3, $3, 0, $4)
+                    ON CONFLICT (heist_id, user_id) DO NOTHING
+                    RETURNING user_id
+                """, heist_id, user_id, share, datetime.now())
+
+                if inserted is None:
                     logging.warning(f"Пользователь {user_id} уже участвует в налёте {heist_id}")
                     await callback.answer("❌ Ты уже участвуешь в этом налёте.", show_alert=True)
                     return
 
-                # Устанавливаем кулдаун участия
+                # Шаг 10: обновление банка налёта
+                logging.info("Шаг 10: обновление банка налёта")
+                await conn.execute(
+                    "UPDATE heists SET total_pot = total_pot + $1, remaining_pot = remaining_pot + $1 WHERE id=$2",
+                    share, heist_id
+                )
+
+                # Шаг 11: установка кулдауна
+                logging.info("Шаг 11: установка кулдауна")
                 await set_global_cooldown(user_id, "heist_participate", participant_cooldown)
 
-                # Получаем имя пользователя для фразы
+                # Шаг 12: получение имени пользователя для фразы
+                logging.info("Шаг 12: получение имени")
                 user_info = await conn.fetchrow("SELECT first_name FROM users WHERE user_id=$1", user_id)
                 name = user_info['first_name'] if user_info else f"ID{user_id}"
                 config = HEIST_TYPES[heist['event_type']]
                 phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]), name=name)
 
-                # Обновляем счётчик участников в сообщении
+                # Шаг 13: обновление сообщения с количеством участников
+                logging.info("Шаг 13: обновление сообщения")
                 participants_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
                 if heist['message_id']:
                     try:
@@ -7011,20 +7038,21 @@ async def heist_join_callback(callback: CallbackQuery):
                     except Exception as e:
                         logging.error(f"Не удалось обновить сообщение налёта: {e}")
 
-        # Всё хорошо, отвечаем пользователю
+        # Шаг 14: успех
+        logging.info("Шаг 14: успех, отправка callback.answer")
         await callback.answer("✅ Вы участвуете в налёте!")
-        # Отправляем фразу в чат
+        logging.info("Шаг 15: отправка фразы в чат")
         await safe_send_chat(chat_id, phrase)
         logging.info(f"✅ Участник {user_id} успешно добавлен в налёт {heist_id}")
 
     except Exception as e:
-        logging.exception(f"💥 Критическая ошибка в heist_join_callback: {e}")
+        logging.exception(f"💥 КРИТИЧЕСКАЯ ОШИБКА в heist_join_callback: {e}")
         try:
             await callback.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.", show_alert=True)
         except:
             pass
-
-
+                
+                
 # ==================== ОБРАБОТЧИК ВЫБОРА КИДАЛОВА (ИЗ ЛС) ====================
 @dp.callback_query(F.data.startswith("betray_choice_yes_"))
 async def betray_choice_yes_callback(callback: CallbackQuery, state: FSMContext):
