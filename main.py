@@ -12022,7 +12022,7 @@ async def heist_spawner():
                             if datetime.now() - last_heist < timedelta(minutes=interval_minutes):
                                 continue
 
-                    # Создаём налёт
+                                        # Создаём налёт
                     heist_id = await spawn_heist(chat_id)
                     if not heist_id:
                         continue
@@ -12042,6 +12042,7 @@ async def heist_spawner():
                         msg = await bot.send_message(chat_id, text, reply_markup=kb)
                         # Сохраняем message_id
                         await update_heist_message(heist_id, msg.message_id)
+                        asyncio.create_task(finish_heist_joining(heist_id, heist['join_until']))
                         # Обновляем last_heist_time
                         await conn.execute(
                             "UPDATE confirmed_chats SET last_heist_time=$1 WHERE chat_id=$2",
