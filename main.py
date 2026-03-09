@@ -2905,21 +2905,11 @@ async def match_orders(conn):
     await conn.execute("UPDATE bitcoin_orders SET status = 'completed' WHERE id = $1", buy['id'])
 else:
     await conn.execute("UPDATE bitcoin_orders SET amount = $1, total_locked = $2 WHERE id = $3", new_buy_amount, new_buy_amount * buy['price'], buy['id'])
-        else:
-            await conn.execute("""
-                UPDATE bitcoin_orders SET amount = $1, total_locked = $2
-                WHERE id = $3
-            """, new_buy_amount, new_buy_amount * buy['price'], buy['id'])
-        
-        if new_sell_amount <= 0.0001:
+
+if new_sell_amount <= 0.0001:
     await conn.execute("UPDATE bitcoin_orders SET status = 'completed' WHERE id = $1", sell['id'])
 else:
     await conn.execute("UPDATE bitcoin_orders SET amount = $1, total_locked = $2 WHERE id = $3", new_sell_amount, new_sell_amount, sell['id'])
-        else:
-            await conn.execute("""
-                UPDATE bitcoin_orders SET amount = $1, total_locked = $2
-                WHERE id = $3
-            """, new_sell_amount, new_sell_amount, sell['id'])
         
         # Записываем сделку
         await conn.execute("""
