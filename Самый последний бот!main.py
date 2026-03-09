@@ -7373,11 +7373,11 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
             await callback.answer("❌ Неверный номер камеры", show_alert=True)
             return
         
-        current_state = await state.get_state()
-        if current_state != JailProcess.cell.state:
-            await callback.answer("❌ Сессия устарела. Начните заново.", show_alert=True)
-            await state.clear()
-            return
+        #current_state = await state.get_state()
+        #if current_state != JailProcess.cell.state:
+            #await callback.answer("❌ Сессия устарела. Начните заново.", show_alert=True)
+            #await state.clear()
+            #return
         
         await state.update_data(cell=cell)
         await callback.answer(f"✅ Выбрана камера {cell}")
