@@ -2897,20 +2897,22 @@ async def match_orders(conn):
         await update_user_balance(seller_id, total, conn=conn, allow_negative=False)
         await update_user_bitcoin(buyer_id, amount, conn=conn)
         
-        # Обновляем заявки
+                # Обновляем заявки
         new_buy_amount = buy['amount'] - amount
         new_sell_amount = sell['amount'] - amount
-        
-        if new_buy_amount <= 0.0001:
-    await conn.execute("UPDATE bitcoin_orders SET status = 'completed' WHERE id = $1", buy['id'])
-else:
-    await conn.execute("UPDATE bitcoin_orders SET amount = $1, total_locked = $2 WHERE id = $3", new_buy_amount, new_buy_amount * buy['price'], buy['id'])
 
-if new_sell_amount <= 0.0001:
-    await conn.execute("UPDATE bitcoin_orders SET status = 'completed' WHERE id = $1", sell['id'])
-else:
-    await conn.execute("UPDATE bitcoin_orders SET amount = $1, total_locked = $2 WHERE id = $3", new_sell_amount, new_sell_amount, sell['id'])
-        
+        if new_buy_amount <= 0.0001:
+            await conn.execute("UPDATE bitcoin_orders SET status = 'completed' WHERE id = $1", buy['id'])
+        else:
+            await conn.execute("UPDATE bitcoin_orders SET amount = $1, total_locked = $2 WHERE id = $3",
+                               new_buy_amount, new_buy_amount * buy['price'], buy['id'])
+
+        if new_sell_amount <= 0.0001:
+            await conn.execute("UPDATE bitcoin_orders SET status = 'completed' WHERE id = $1", sell['id'])
+        else:
+            await conn.execute("UPDATE bitcoin_orders SET amount = $1, total_locked = $2 WHERE id = $3",
+                               new_sell_amount, new_sell_amount, sell['id'])
+
         # Записываем сделку
         await conn.execute("""
             INSERT INTO bitcoin_trades (buy_order_id, sell_order_id, amount, price, buyer_id, seller_id)
