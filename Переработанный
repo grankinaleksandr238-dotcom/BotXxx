@@ -6760,3 +6760,217 @@ async def process_roulette_repeat(user_id: int, amount: float, bet_type: str, nu
     await bot.send_message(chat_id, phrase, reply_markup=repeat_bet_keyboard('roulette'))
 
 # ==================== КОНЕЦ ЧАСТИ 4 ====================
+# ==================== ЧАСТЬ 5: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ – УНИВЕРСИТЕТ, МАГАЗИН, ПРОМОКОДЫ, РЕФЕРАЛКА, ЗАДАНИЯ, РОЗЫГРЫШИ, БИРЖА, ОГРАБЛЕНИЯ ====================
+
+# ==================== УНИВЕРСИТЕТ (ПРОКАЧКА НАВЫКОВ) ====================
+@dp.message(F.text == "🎓 Университет")
+async def university_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+    skills = await get_user_skills(user_id)
+    authority = await get_user_authority(user_id)
+    max_level = await get_setting_int("skill_max_level")
+    share_cost = await get_setting_int("skill_share_cost_per_level")
+    luck_cost = await get_setting_int("skill_luck_cost_per_level")
+    betray_cost = await get_setting_int("skill_betray_cost_per_level")
+    share_bonus = skills['skill_share'] * await get_setting_int("skill_share_bonus_per_level")
+    luck_bonus = skills['skill_luck'] * await get_setting_int("skill_luck_bonus_per_level")
+    betray_bonus = skills['skill_betray'] * await get_setting_int("skill_betray_bonus_per_level")
+    text = (
+        f"🎓 <b>Криминальный университет</b>\n\n"
+        f"Твой авторитет: {authority}\n\n"
+        f"<b>Навыки:</b>\n"
+        f"🎯 Доля: уровень {skills['skill_share']}/{max_level} (бонус к сумме грабежей: +{share_bonus}%)\n"
+        f"🍀 Удача: уровень {skills['skill_luck']}/{max_level} (бонус к уходу: +{luck_bonus}%)\n"
+        f"🔪 Кидалово: уровень {skills['skill_betray']}/{max_level} (бонус к успеху: +{betray_bonus}%)\n\n"
+        f"Стоимость прокачки:\n"
+        f"Доля: {share_cost} авт.\n"
+        f"Удача: {luck_cost} авт.\n"
+        f"Кидалово: {betray_cost} авт.\n\n"
+        f"Введи название навыка, который хочешь прокачать (доля, удача, кидалово):"
+    )
+    await message.answer(text, reply_markup=back_keyboard())
+
+@dp.message(F.text.lower().in_({"доля", "удача", "кидалово"}), StateFilter(None))
+async def upgrade_skill_choice(message: Message, state: FSMContext):
+    skill_map = {"доля": "share", "удача": "luck", "кидалово": "betray"}
+    skill = skill_map[message.text.lower()]
+    user_id = message.from_user.id
+    skills = await get_user_skills(user_id)
+    current_level = skills[f'skill_{skill}']
+    max_level = await get_setting_int("skill_max_level")
+    if current_level >= max_level:
+        await message.answer("❌ Этот навык уже максимального уровня.")
+        return
+    cost = await get_setting_int(f"skill_{skill}_cost_per_level")
+    authority = await get_user_authority(user_id)
+    if authority < cost:
+        await message.answer(f"❌ Недостаточно авторитета. Нужно {cost}, у тебя {authority}.")
+        return
+    await state.update_data(skill=skill, cost=cost)
+    await message.answer(f"Прокачать {message.text.lower()} до уровня {current_level+1} за {cost} авторитета? (да/нет)", reply_markup=back_keyboard())
+    await UpgradeSkill.confirming.set()
+
+@dp.message(UpgradeSkill.confirming, F.text)
+async def upgrade_skill_confirm(message: Message, state: FSMContext):
+    if message.text.lower() == 'нет' or message.text == "◀️ Назад":
+        await state.clear()
+        await university_menu(message)
+        return
+    if message.text.lower() == 'да':
+        data = await state.get_data()
+        skill = data['skill']
+        cost = data['cost']
+        user_id = message.from_user.id
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                authority = await get_user_authority(user_id)
+                if authority < cost:
+                    await message.answer("❌ Недостаточно авторитета.")
+                    await state.clear()
+                    return
+                await update_user_authority(user_id, -cost, conn=conn)
+                await update_user_skill(user_id, f'skill_{skill}', delta=1, conn=conn)
+        await message.answer(f"✅ Навык успешно прокачан!", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        await state.clear()
+        await university_menu(message)
+    else:
+        await message.answer("Введи 'да' или 'нет'.")
+
+# ==================== МАГАЗИН ПОДАРКОВ ====================
+@dp.message(F.text == "🛒 Магазин")
+async def shop_handler(message: Message, state: FSMContext):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, name, description, price, stock FROM shop_items ORDER BY id")
+    if not rows:
+        await message.answer("🎁 В магазине пока нет подарков.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        return
+
+    text = "🎁 <b>Доступные подарки:</b>\n\n"
+    for row in rows:
+        stock_info = f" (в наличии: {row['stock']})" if row['stock'] != -1 else ""
+        text += f"🆔 {row['id']}: <b>{row['name']}</b>\n{row['description']}\n💰 {float(row['price']):.2f} MLB{stock_info}\n\n"
+    text += "Введи ID товара, который хочешь купить (или /cancel для отмены)."
+
+    await message.answer(text, reply_markup=back_keyboard())
+    await state.set_state(PurchaseItem.item_id)
+
+@dp.message(PurchaseItem.item_id, F.text)
+async def process_purchase_id(message: Message, state: FSMContext):
+    if message.text == "◀️ Назад":
+        await state.clear()
+        await message.answer("Главное меню:", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
+        return
+    try:
+        item_id = int(message.text.strip())
+    except ValueError:
+        await message.answer("❌ Введи число.")
+        return
+    user_id = message.from_user.id
+    try:
+        logging.info(f"Покупка: пользователь {user_id}, товар ID {item_id}")
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1 FOR UPDATE", item_id)
+                if not row:
+                    await message.answer("❌ Товар с таким ID не найден.")
+                    return
+                name, price, stock = row['name'], float(row['price']), row['stock']
+                if stock != -1 and stock <= 0:
+                    await message.answer("❌ Товара нет в наличии!")
+                    return
+                balance = await get_user_balance(user_id)
+                if balance < price:
+                    await message.answer(f"❌ Не хватает MLB! Нужно {price:.2f}, у тебя {balance:.2f}")
+                    return
+                success, new_balance, _ = await update_user_balance(user_id, -price, conn=conn, allow_negative=False)
+                if not success:
+                    await message.answer("❌ Ошибка при списании средств.")
+                    return
+                await update_user_total_spent(user_id, price, conn=conn)
+                await conn.execute(
+                    "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
+                    user_id, item_id, datetime.now()
+                )
+                if stock != -1:
+                    await conn.execute("UPDATE shop_items SET stock = stock - 1 WHERE id=$1", item_id)
+        await message.answer(f"✅ Ты купил {name}! Ожидай подтверждения.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        asyncio.create_task(notify_admins_about_purchase(message.from_user, name, price))
+    except Exception as e:
+        logging.exception("Ошибка при покупке")
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+    finally:
+        await state.clear()
+
+async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
+    admins = SUPER_ADMINS.copy()
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch("SELECT user_id FROM admins")
+            admins.extend([r['user_id'] for r in rows])
+    except Exception as e:
+        logging.exception("Ошибка при получении списка админов")
+        return
+    text = f"🛍 <b>Новая покупка!</b>\nПользователь: {user.first_name} (ID: {user.id})\nТовар: {item_name}\nЦена: {price:.2f} MLB"
+    for admin_id in admins:
+        await safe_send_message(admin_id, text)
+
+# ==================== МОИ ПОКУПКИ ====================
+@dp.message(F.text == "💰 Мои покупки")
+async def my_purchases(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
+        return
+
+    async with db_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT p.id, s.name, p.purchase_date, p.status, p.admin_comment FROM purchases p "
+            "JOIN shop_items s ON p.item_id = s.id WHERE p.user_id=$1 ORDER BY p.purchase_date DESC",
+            user_id
+        )
+
+    if not rows:
+        await message.answer("У тебя пока нет покупок.", reply_markup=main_menu_keyboard(await is_admin(user_id)))
+        return
+
+    text = "📦 <b>Твои покупки:</b>\n\n"
+    for row in rows:
+        status_emoji = "⏳" if row['status'] == 'pending' else "✅" if row['status'] == 'completed' else "❌"
+        date_str = row['purchase_date'].strftime("%Y-%m-%d %H:%M") if row['purchase_date'] else "неизвестно"
+        text += f"{status_emoji} {row['name']} от {date_str}\n"
+        if row['admin_comment']:
+            text += f"   Комментарий: {row['admin_comment']}\n"
+        text += "\n"
+
+    await message.answer(text, reply_markup=main_menu_keyboard(await is_admin(user_id)))
+
+# ==================== ПРОМОКОД (хендлеры уже в части 3) ====================
+# (перенесено из части 3 для целостности, но они там уже есть)
+# @dp.message(F.text == "🎟 Промокод") и promo_activate уже в части 3, оставляем только в части 3.
+# ==================== КОНЕЦ ЧАСТИ 5 ====================
