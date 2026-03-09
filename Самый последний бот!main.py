@@ -4351,7 +4351,7 @@ def admin_fights_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="🥊 Управление бойцами")],
-            [KeyboardButton(text="🥊 Управление боями")],
+            [KeyboardButton(text="📋 Список боёв")],
             [KeyboardButton(text="📊 Статистика боёв")],
             [KeyboardButton(text="◀️ Назад в админку")]
         ],
