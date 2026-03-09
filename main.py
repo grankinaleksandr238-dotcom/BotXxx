@@ -12427,7 +12427,7 @@ async def fight_scheduler():
 # ==================== ОБНОВЛЕНИЕ КОМАНД БОТА ====================
 async def set_bot_commands():
     """Устанавливает команды бота (актуальный список)."""
-    await bot.set_my_commands([
+    commands = [
         types.BotCommand(command="start", description="🚀 Запустить бота"),
         types.BotCommand(command="help", description="📚 Помощь"),
         types.BotCommand(command="cancel", description="❌ Отменить действие"),
@@ -12439,7 +12439,16 @@ async def set_bot_commands():
         types.BotCommand(command="mlb_heist", description="💰 Статус налёта"),
         types.BotCommand(command="myheist", description="📊 Мой налёт"),
         types.BotCommand(command="mlb_fights", description="🥊 Активные бои"),
-    ])
+    ]
+    
+    # Для личных сообщений
+    await bot.set_my_commands(commands, scope=types.BotCommandScopeAllPrivateChats())
+    
+    # Для всех групп
+    await bot.set_my_commands(commands, scope=types.BotCommandScopeAllChatAdministrators())
+    
+    # Для всех чатов (если нужно)
+    # await bot.set_my_commands(commands, scope=types.BotCommandScopeDefault())
 
 # ==================== ЗАПУСК ====================
 async def on_startup():
