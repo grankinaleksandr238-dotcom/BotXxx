@@ -7274,10 +7274,14 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
         logging.error(f"Ошибка при обработке выбора камеры: {e}")
         await callback.answer("❌ Ошибка при выборе камеры", show_alert=True)
         await state.clear()
+    except Exception as e:
+        logging.exception(f"Неожиданная ошибка в jail_cell_callback: {e}")
+        await callback.answer("❌ Внутренняя ошибка", show_alert=True)
+        await state.clear()
+
 
 @dp.callback_query(F.data == "jail_cancel")
 async def jail_cancel_callback(callback: CallbackQuery, state: FSMContext):
-    """Отмена процесса тюрьмы"""
     await callback.answer("❌ Отменено")
     await state.clear()
     await callback.message.answer(
@@ -7285,10 +7289,10 @@ async def jail_cancel_callback(callback: CallbackQuery, state: FSMContext):
         reply_markup=main_menu_keyboard(await is_admin(callback.from_user.id))
     )
 
+
 @dp.message(JailProcess.article, F.text)
 async def jail_article_message(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
-        # Возвращаемся к выбору камеры
         await state.set_state(JailProcess.cell)
         await message.answer(
             "🔒 Выбери номер камеры (от 1 до 15):",
@@ -7323,6 +7327,7 @@ async def jail_article_message(message: Message, state: FSMContext):
         
         await start_jail_sentence(user_id, chat_id, duration, cell, article)
         
+        # Шанс на золотой билет (1%)
         if random.random() < 0.01:
             gift_amount = await get_setting_float("golden_ticket_gift")
             await update_user_balance(user_id, gift_amount, allow_negative=False)
@@ -7353,6 +7358,11 @@ async def jail_article_message(message: Message, state: FSMContext):
         
     except ValueError:
         await message.answer("❌ Введи целое число от 1 до 300.")
+    except Exception as e:
+        logging.exception(f"Ошибка в jail_article_message: {e}")
+        await message.answer("❌ Произошла ошибка. Попробуй позже.")
+        await state.clear()
+        
 
 # ==================== КОМАНДА /mlb_top (ТОП В ЧАТЕ) ====================
 @dp.message(Command("mlb_top"))
