@@ -7254,7 +7254,7 @@ async def cmd_jail(message: Message, state: FSMContext):
         await auto_delete_reply(message, "❌ Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.")
 
 # ==================== ОБРАБОТЧИК ВЫБОРА КАМЕРЫ (ИЗ ЛС) ====================
-@dp.callback_query(JailProcess.cell, F.data.startswith("jail_cell_"))
+@dp.callback_query(F.data.startswith("jail_cell_"))
 async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
     logging.info(f"jail_cell_callback вызван с data: {callback.data}, user_id: {callback.from_user.id}")
     
