@@ -3377,86 +3377,151 @@ async def place_bet(user_id: int, fight_id: int, fighter_id: int, amount: float)
             return True, f"✅ Ставка {amount:.2f} MLB на бойца принята! Коэффициент: {odds:.2f}", odds
 
 def calculate_odds(total1: float, total2: float, commission: int, is_fighter1: bool) -> float:
-    """Рассчитывает коэффициент для бойца 1 или 2."""
+    """Рассчитывает коэффициент для бойца (без учёта комиссии, комиссия будет с прибыли)"""
     total_pool = total1 + total2
     if total_pool == 0:
-        # Если ещё нет ставок, коэффициент по умолчанию 2.0 (с учётом комиссии)
-        return 2.0 * (1 - commission/100)
+        # Если ставок нет, базовый коэффициент 2.0
+        return 2.0
+    
+    # Максимальный коэффициент (защита от космических выплат)
+    MAX_ODDS = 10.0
+    
     if is_fighter1:
         if total1 == 0:
-            return 0  # не должно быть, но на всякий случай
-        return (total_pool / total1) * (1 - commission/100)
+            return MAX_ODDS  # Если на бойца нет ставок, максимальный коэффициент
+        raw_odds = total_pool / total1
     else:
         if total2 == 0:
-            return 0
-        return (total_pool / total2) * (1 - commission/100)
+            return MAX_ODDS
+        raw_odds = total_pool / total2
+    
+    # Ограничиваем максимальный коэффициент
+    if raw_odds > MAX_ODDS:
+        raw_odds = MAX_ODDS
+    
+    return round(raw_odds, 2)
 
 @db_retry()
 async def finish_fight(fight_id: int):
-    """Завершает бой: определяет победителя, выплачивает ставки, обновляет статус."""
+    """Завершает бой: определяет победителя на основе ставок, выплачивает с комиссией с прибыли"""
     async with db_pool.acquire() as conn:
         async with conn.transaction():
             fight = await conn.fetchrow("SELECT * FROM fights WHERE id = $1 AND status = 'active' FOR UPDATE", fight_id)
             if not fight:
                 return
 
-            # Получаем характеристики бойцов
-            f1 = await conn.fetchrow("SELECT * FROM fighters WHERE id = $1", fight['fighter1_id'])
-            f2 = await conn.fetchrow("SELECT * FROM fighters WHERE id = $1", fight['fighter2_id'])
-            if not f1 or not f2:
-                logging.error(f"Fight {fight_id}: one of fighters not found")
-                await conn.execute("UPDATE fights SET status = 'cancelled' WHERE id = $1", fight_id)
-                return
-
-            # Рассчитываем базовый шанс победы для fighter1 (простая формула)
-            total1 = f1['strength'] + f1['agility'] + f1['stamina']
-            total2 = f2['strength'] + f2['agility'] + f2['stamina']
-            chance1 = total1 / (total1 + total2) if (total1+total2) > 0 else 0.5
-
-            # Определяем победителя случайно
-            winner_id = fight['fighter1_id'] if random.random() < chance1 else fight['fighter2_id']
-            loser_id = fight['fighter2_id'] if winner_id == fight['fighter1_id'] else fight['fighter1_id']
-
             # Получаем все ставки на этот бой
             bets = await conn.fetch("SELECT * FROM bets WHERE fight_id = $1 AND status = 'pending'", fight_id)
-
+            
+            # Считаем общую сумму ставок на каждого бойца
+            total_bets_f1 = sum(float(b['amount']) for b in bets if b['fighter_id'] == fight['fighter1_id'])
+            total_bets_f2 = sum(float(b['amount']) for b in bets if b['fighter_id'] == fight['fighter2_id'])
+            total_pool = total_bets_f1 + total_bets_f2
+            
+            # Определяем шансы на основе ставок (толпа ошибается!)
+            if total_pool == 0:
+                # Если ставок нет - чистый рандом 50/50
+                winner_id = random.choice([fight['fighter1_id'], fight['fighter2_id']])
+            else:
+                # Чем БОЛЬШЕ ставят на бойца, тем МЕНЬШЕ его шанс
+                chance_for_f1 = total_bets_f2 / total_pool  # шанс первого = ставки на второго
+                
+                if random.random() < chance_for_f1:
+                    winner_id = fight['fighter1_id']
+                else:
+                    winner_id = fight['fighter2_id']
+            
+            loser_id = fight['fighter2_id'] if winner_id == fight['fighter1_id'] else fight['fighter1_id']
+            
+            # Получаем информацию о бойцах для красивых фраз
+            f1 = await conn.fetchrow("SELECT * FROM fighters WHERE id = $1", fight['fighter1_id'])
+            f2 = await conn.fetchrow("SELECT * FROM fighters WHERE id = $1", fight['fighter2_id'])
+            
+            # Обрабатываем ставки
             total_commission = 0.0
-            # Обрабатываем каждую ставку
+            winners_count = 0
+            losers_count = 0
+            
             for bet in bets:
                 user_id = bet['user_id']
                 amount = float(bet['amount'])
-                odds = bet['odds']
-                if bet['fighter_id'] == winner_id:
-                    payout = amount * odds
+                fighter_id = bet['fighter_id']
+                
+                if fighter_id == winner_id:
+                    # Выигрыш
+                    winners_count += 1
+                    
+                    # Рассчитываем коэффициент для этой ставки (индивидуально)
+                    if fighter_id == fight['fighter1_id']:
+                        odds = calculate_odds(total_bets_f1, total_bets_f2, fight['commission_percent'], True)
+                    else:
+                        odds = calculate_odds(total_bets_f1, total_bets_f2, fight['commission_percent'], False)
+                    
+                    # Валовая прибыль
+                    gross_win = amount * odds
+                    
+                    # Прибыль (то, что сверх ставки)
+                    profit = gross_win - amount
+                    
+                    # Комиссия ТОЛЬКО с прибыли
+                    commission = profit * fight['commission_percent'] / 100
+                    payout = gross_win - commission
+                    
+                    # Выплачиваем
                     await update_user_balance(user_id, payout, conn=conn, allow_negative=False)
-                    await conn.execute("UPDATE bets SET status = 'won', payout = $1 WHERE id = $2", payout, bet['id'])
+                    await conn.execute(
+                        "UPDATE bets SET status = 'won', payout = $1 WHERE id = $2",
+                        payout, bet['id']
+                    )
+                    
+                    total_commission += commission
+                    
                 else:
-                    # Проигравшие не получают ничего, их ставка идёт в пул (часть уходит боту как комиссия)
-                    # Комиссия уже учтена в коэффициентах, поэтому ничего не возвращаем
-                    await conn.execute("UPDATE bets SET status = 'lost', payout = 0 WHERE id = $1", bet['id'])
-                    total_commission += amount * (fight['commission_percent'] / 100)  # для статистики
-
-            # Выбираем случайную фразу для окончания боя
-            outcome_type = random.choice(['knockout', 'submission', 'decision'])
+                    # Проигрыш
+                    losers_count += 1
+                    await conn.execute(
+                        "UPDATE bets SET status = 'lost', payout = 0 WHERE id = $1",
+                        bet['id']
+                    )
+                    # Ставка остаётся у бота (уже списана при размещении)
+            
+            # Выбираем фразу для окончания боя
             winner_name = f1['name'] if winner_id == fight['fighter1_id'] else f2['name']
             loser_name = f2['name'] if winner_id == fight['fighter1_id'] else f1['name']
-            phrase = get_random_phrase(FIGHT_END_PHRASES.get(outcome_type, ["🥊 Бой окончен! Победитель: {winner}"]),
-                                        winner=winner_name, loser=loser_name)
-
+            
+            # Случайный тип окончания
+            outcome_type = random.choice(['knockout', 'submission', 'decision'])
+            phrase_templates = FIGHT_END_PHRASES.get(outcome_type, ["🥊 Бой окончен! Победитель: {winner}"])
+            phrase = get_random_phrase(phrase_templates, winner=winner_name, loser=loser_name)
+            
+            # Добавляем статистику
+            stats = (
+                f"\n\n📊 <b>Статистика боя:</b>\n"
+                f"👥 Всего ставок: {len(bets)}\n"
+                f"✅ Выиграло: {winners_count}\n"
+                f"❌ Проиграло: {losers_count}\n"
+                f"💰 Комиссия бота: {total_commission:.2f} MLB"
+            )
+            
             # Обновляем статус боя
             await conn.execute(
                 "UPDATE fights SET status = 'finished', winner_id = $1 WHERE id = $2",
                 winner_id, fight_id
             )
-
-            # Отправляем уведомления в чат, где был анонс
+            
+            # Отправляем результат
+            final_text = f"🥊 {phrase}{stats}"
+            
             if fight['chat_id'] and fight['message_id']:
-                text = f"🥊 {phrase}\n\n💰 Всего ставок: {len(bets)}. Спасибо за участие!"
                 try:
-                    await bot.edit_message_text(text, fight['chat_id'], fight['message_id'])
+                    await bot.edit_message_text(final_text, fight['chat_id'], fight['message_id'])
                 except Exception as e:
                     logging.error(f"Failed to edit fight message: {e}")
+                    await notify_chats(final_text)
             else:
+                await notify_chats(final_text)
+            
+            logging.info(f"Fight {fight_id} finished. Winner: {winner_id}. Commission: {total_commission:.2f} MLB")
                 # Если нет сохранённого чата, шлём во все подтверждённые
                 await notify_chats(f"🥊 {phrase}")
 
