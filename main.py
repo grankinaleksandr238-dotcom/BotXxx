@@ -7239,21 +7239,21 @@ async def cmd_jail(message: Message, state: FSMContext):
     try:
         await bot.send_message(
             user_id,
-            "🔒 Выбери номер камеры, в которую хочешь отправиться (от 1 до 15):",
+                        "🔒 Выбери номер камеры, в которую хочешь отправиться (от 1 до 15):",
             reply_markup=jail_cell_keyboard()
         )
     except Exception as e:
-    logging.error(f"Failed to send jail menu to {user_id}: {e}")
-    await auto_delete_reply(message, "❌ Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.")
-    
-    # ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ ПРИ ОШИБКЕ
-    try:
-        await message.delete()
-        logging.info(f"Команда {message.text} удалена при ошибке")
-    except Exception as delete_error:
-        logging.error(f"Не удалось удалить команду при ошибке: {delete_error}")
-    
-    return
+        logging.error(f"Failed to send jail menu to {user_id}: {e}")
+        await auto_delete_reply(message, "❌ Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.")
+        
+        # ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ ПРИ ОШИБКЕ
+        try:
+            await message.delete()
+            logging.info(f"Команда {message.text} удалена при ошибке")
+        except Exception as delete_error:
+            logging.error(f"Не удалось удалить команду при ошибке: {delete_error}")
+        
+        return
     
 
 # ==================== ОБРАБОТЧИК ВЫБОРА КАМЕРЫ (ИЗ ЛС) ====================
