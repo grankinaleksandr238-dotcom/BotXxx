@@ -7102,29 +7102,29 @@ async def heist_join_callback(callback: CallbackQuery):
                 config = HEIST_TYPES[heist['event_type']]
                 phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]), name=name)
 
-                # Шаг 13: обновление сообщения с количеством участников
+                                # Шаг 13: обновление сообщения с количеством участников
                 logging.info("Шаг 13: обновление сообщения")
                 participants_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
                 if heist['message_id']:
-    try:
-        new_text = callback.message.text
-        if "👥 Участников:" not in new_text:
-            new_text += f"\n\n👥 Участников: {participants_count}"
-        else:
-            lines = new_text.split('\n')
-            for i, line in enumerate(lines):
-                if line.startswith("👥 Участников:"):
-                    lines[i] = f"👥 Участников: {participants_count}"
-                    break
-            new_text = '\n'.join(lines)
-        await bot.edit_message_text(
-            new_text, 
-            chat_id, 
-            heist['message_id'],
-            reply_markup=callback.message.reply_markup  # ← добавить эту строку
-        )
-    except Exception as e:
-        logging.error(f"Не удалось обновить сообщение налёта: {e}")
+                    try:
+                        new_text = callback.message.text
+                        if "👥 Участников:" not in new_text:
+                            new_text += f"\n\n👥 Участников: {participants_count}"
+                        else:
+                            lines = new_text.split('\n')
+                            for i, line in enumerate(lines):
+                                if line.startswith("👥 Участников:"):
+                                    lines[i] = f"👥 Участников: {participants_count}"
+                                    break
+                            new_text = '\n'.join(lines)
+                        await bot.edit_message_text(
+                            new_text, 
+                            chat_id, 
+                            heist['message_id'],
+                            reply_markup=callback.message.reply_markup
+                        )
+                    except Exception as e:
+                        logging.error(f"Не удалось обновить сообщение налёта: {e}")
 
         # Шаг 14: успех
         logging.info("Шаг 14: успех, отправка callback.answer")
