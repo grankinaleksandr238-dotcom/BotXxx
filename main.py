@@ -5575,13 +5575,11 @@ async def fight_view_callback(callback: CallbackQuery):
         f"💰 Общий пул: {total1+total2:.2f} MLB\n\n"
         f"Выбери, на кого поставишь:"
     )
-    # Вместо ручного создания клавиатуры вызываем функцию
-    kb = fight_detail_keyboard(
-        fight_id, 
-        fight['fighter1_id'], fight['fighter2_id'],
-        f1['name'], f2['name'], 
-        odds1, odds2
-    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"{f1['name']} ({odds1:.2f})", callback_data=f"bet_fighter_{fight_id}_{fight['fighter1_id']}"),
+         InlineKeyboardButton(text=f"{f2['name']} ({odds2:.2f})", callback_data=f"bet_fighter_{fight_id}_{fight['fighter2_id']}")],
+        [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="fights_back")]
+    ])
     await callback.message.edit_text(text, reply_markup=kb)
     await callback.answer()
 
