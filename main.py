@@ -7216,6 +7216,13 @@ async def cmd_jail(message: Message, state: FSMContext):
         await auto_delete_command(message, "❗️ Для использования тюрьмы необходимо подписаться на каналы.", reply_markup=subscription_inline(not_subscribed))
         return
 
+    # 👇 ДОБАВЛЕННЫЕ СТРОКИ (вставь их сюда)
+    await state.set_state(JailProcess.cell)
+    await state.update_data(chat_id=message.chat.id)
+    # 👆
+
+    # ... далее продолжается твой остальной код (проверка активного срока, кулдауна, автоудаление и отправка сообщения)
+
     # Убираем глобальный кулдаун чата, оставляем только специфичный кулдаун тюрьмы
     async with db_pool.acquire() as conn:
         active = await conn.fetchval(
