@@ -7252,11 +7252,11 @@ async def cmd_jail(message: Message, state: FSMContext):
 async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
     logging.info(f"jail_cell_callback вызван с data: {callback.data}, user_id: {callback.from_user.id}")
     
-    current_state = await state.get_state()
-    if current_state != JailProcess.cell.state:
-        await callback.answer("❌ Сессия устарела. Начните заново.", show_alert=True)
-        await state.clear()
-        return
+    #current_state = await state.get_state()
+    #if current_state != JailProcess.cell.state:
+        #await callback.answer("❌ Сессия устарела. Начните заново.", show_alert=True)
+        #await state.clear()
+        #return
     
     try:
         cell = int(callback.data.split("_")[2])
