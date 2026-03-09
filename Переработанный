@@ -2357,7 +2357,7 @@ async def upgrade_business(user_id: int, business_id: int, conn=None) -> Tuple[b
             return False, f"❌ Недостаточно биткоинов. Нужно {cost:.2f} BTC, у вас {btc_balance:.4f}."
         await update_user_bitcoin(user_id, -cost, conn=conn)
         await conn.execute("UPDATE user_businesses SET level = level + 1 WHERE id=$1", business_id)
-        return True, f"✅ Фармилка {biz['emoji']} {biz['name']} улучшена до уровня {biz['level'] + 1}! Потрачено {cost:.2f} BTC."
+        return True, f"✅ Отмыть BTC {biz['emoji']} {biz['name']} улучшена до уровня {biz['level'] + 1}! Потрачено {cost:.2f} BTC."
     if conn:
         return await _upgrade(conn)
     else:
@@ -4051,7 +4051,7 @@ def main_menu_keyboard(is_admin: bool = False) -> ReplyKeyboardMarkup:
         KeyboardButton(text="🎁 Розыгрыши")
     )
     builder.row(
-        KeyboardButton(text="🏪 Фармилка"),
+        KeyboardButton(text="Отмыть BTC"),
         KeyboardButton(text="💼 Биткоин-биржа"),
         KeyboardButton(text="🥊 Подпольные бои")
     )
@@ -4852,7 +4852,7 @@ async def cmd_help_private(message: Message):
         "🔗 <b>Рефералка</b> – приглашай друзей\n"
         "📊 <b>Уровень</b> – твой прогресс\n"
         "🎁 <b>Розыгрыши</b> – активные и завершённые\n"
-        "🏪 <b>Фармилка</b> – управление фармилками (покупка за BTC)\n"
+        "🏪 <b>Отмыть BTC</b> – управление фармилками (покупка за BTC)\n"
         "💼 <b>Биткоин-биржа</b> – продавай и покупай BTC за MLB\n"
         "🥊 <b>Подпольные бои</b> – ставки на бойцов\n"
         "🎓 <b>Университет</b> – прокачка навыков за авторитет\n"
@@ -10442,7 +10442,7 @@ async def list_completed_giveaways(message: Message, page: int = 1):
     if page > 1 or page < total_pages:
         builder = InlineKeyboardBuilder()
         if page > 1:
-            builder.button(text="⬅️", callback_data f"cgw_p{page-1}")
+            builder.button(text="⬅️", callback_data=f"cgw_p{page-1}")
         if page < total_pages:
             builder.button(text="➡️", callback_data=f"cgw_p{page+1}")
         await message.answer(text, reply_markup=builder.as_markup())
