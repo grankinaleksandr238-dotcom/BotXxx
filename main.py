@@ -24,6 +24,13 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise ValueError("❌ DATABASE_URL не задан")
 
+# Добавляем sslmode сразу
+if "?" in DATABASE_URL:
+    if "sslmode" not in DATABASE_URL:
+        DATABASE_URL += "&sslmode=require"
+else:
+    DATABASE_URL += "?sslmode=require"
+
 REDIS_URL = os.getenv("REDIS_URL")
 
 # ==================== СОЗДАНИЕ БОТА ====================
@@ -346,15 +353,11 @@ async def process_check(callback: types.CallbackQuery):
     diag = Diagnostics()
     
     try:
-        # Подключаемся к БД
-        if "?" in DATABASE_URL:
-            if "sslmode" not in DATABASE_URL:
-                DATABASE_URL += "&sslmode=require"
-        else:
-            DATABASE_URL += "?sslmode=require"
+        # Используем глобальную DATABASE_URL (уже обработана выше)
+        db_url = DATABASE_URL
             
         diag.db_pool = await asyncpg.create_pool(
-            DATABASE_URL,
+            db_url,
             min_size=1,
             max_size=2,
             command_timeout=5
