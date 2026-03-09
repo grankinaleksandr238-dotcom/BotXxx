@@ -12426,11 +12426,16 @@ async def fight_scheduler():
 
 # ==================== ОБНОВЛЕНИЕ КОМАНД БОТА ====================
 async def set_bot_commands():
-    """Устанавливает команды бота (актуальный список)."""
-    commands = [
+    """Устанавливает команды бота (только для личных сообщений)."""
+    # Команды для ЛС
+    private_commands = [
         types.BotCommand(command="start", description="🚀 Запустить бота"),
         types.BotCommand(command="help", description="📚 Помощь"),
         types.BotCommand(command="cancel", description="❌ Отменить действие"),
+    ]
+    
+    # Команды для групп (только рабочие)
+    group_commands = [
         types.BotCommand(command="activate_chat", description="🔔 Активировать чат"),
         types.BotCommand(command="mlb_smuggle", description="📦 Контрабанда"),
         types.BotCommand(command="mlb_jail", description="🏛 Тюрьма"),
@@ -12441,14 +12446,10 @@ async def set_bot_commands():
         types.BotCommand(command="mlb_fights", description="🥊 Активные бои"),
     ]
     
-    # Для личных сообщений
-    await bot.set_my_commands(commands, scope=types.BotCommandScopeAllPrivateChats())
-    
-    # Для всех групп
-    await bot.set_my_commands(commands, scope=types.BotCommandScopeAllChatAdministrators())
-    
-    # Для всех чатов (если нужно)
-    # await bot.set_my_commands(commands, scope=types.BotCommandScopeDefault())
+    # Устанавливаем для всех чатов (Telegram сам показывает только /start и /help в группах,
+    # но мы явно разделим, чтобы в группах не было лишнего)
+    await bot.set_my_commands(private_commands, scope=types.BotCommandScopeAllPrivateChats())
+    await bot.set_my_commands(group_commands, scope=types.BotCommandScopeAllGroupChats())
 
 # ==================== ЗАПУСК ====================
 async def on_startup():
