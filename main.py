@@ -3509,10 +3509,10 @@ async def finish_fight(fight_id: int):
                 winner_id, fight_id
             )
             
-            # Отправляем результат
+                        # Отправляем результат
             final_text = f"🥊 {phrase}{stats}"
             
-                        if fight['chat_id'] and fight['message_id']:
+            if fight['chat_id'] and fight['message_id']:
                 try:
                     await bot.edit_message_text(final_text, fight['chat_id'], fight['message_id'])
                 except Exception as e:
@@ -3522,7 +3522,6 @@ async def finish_fight(fight_id: int):
                 await notify_chats(final_text)
             
             logging.info(f"Fight {fight_id} finished. Winner: {winner_id}. Commission: {total_commission:.2f} MLB")
-
 @db_retry()
 async def get_fight_stats(fight_id: int) -> dict:
     """Возвращает статистику по бою: общая сумма ставок, количество, распределение."""
