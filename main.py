@@ -3119,43 +3119,85 @@ async def create_promocode(code: str, reward: float, reward_type: str, max_uses:
 
 @db_retry()
 async def activate_promocode(user_id: int, code: str) -> Tuple[bool, str]:
+    logging.info(f"activate_promocode START: user={user_id}, code={code}")
     async with db_pool.acquire() as conn:
         async with conn.transaction():
-            await conn.execute("SET LOCAL statement_timeout = '5s'")
-            used = await conn.fetchval(
-                "SELECT 1 FROM promo_activations WHERE user_id=$1 AND promo_code=$2",
-                user_id, code
-            )
-            if used:
-                return False, "Вы уже активировали этот промокод"
+            try:
+                # Проверка statement_timeout
+                await conn.execute("SET LOCAL statement_timeout = '5s'")
+                
+                # Проверка, не активирован ли уже
+                used = await conn.fetchval(
+                    "SELECT 1 FROM promo_activations WHERE user_id=$1 AND promo_code=$2",
+                    user_id, code
+                )
+                if used:
+                    logging.warning(f"activate_promocode: уже активирован user={user_id}, code={code}")
+                    return False, "Вы уже активировали этот промокод"
 
-            promo = await conn.fetchrow("SELECT * FROM promocodes WHERE code=$1", code)
-            if not promo:
-                return False, "Промокод не найден"
+                # Получение промокода
+                promo = await conn.fetchrow("SELECT * FROM promocodes WHERE code=$1", code)
+                if not promo:
+                    logging.warning(f"activate_promocode: промокод не найден code={code}")
+                    return False, "Промокод не найден"
 
-            if promo['expires_at'] and promo['expires_at'] < datetime.now():
-                return False, "Срок действия промокода истёк"
+                logging.info(f"activate_promocode: найден промокод: {dict(promo)}")
 
-            if promo['used_count'] >= promo['max_uses']:
-                return False, "Промокод уже использован максимальное количество раз"
+                # Проверка срока действия
+                expires = promo['expires_at']
+                if expires is not None:
+                    # Если expires строка, преобразуем (на случай кривого дампа)
+                    if isinstance(expires, str):
+                        try:
+                            expires = datetime.fromisoformat(expires)
+                        except:
+                            expires = None
+                    if expires and expires < datetime.now():
+                        logging.warning(f"activate_promocode: срок истёк expires={expires}")
+                        return False, "Срок действия промокода истёк"
 
-            reward = float(promo['reward'])
-            if promo['reward_type'] == 'bitcoin':
-                await update_user_bitcoin(user_id, reward, conn=conn)
-                reward_text = f"{reward:.4f} BTC"
-            else:
-                await update_user_balance(user_id, reward, conn=conn, allow_negative=False)
-                reward_text = f"{reward:.2f} MLB"
+                # Проверка лимита использований
+                used_count = promo['used_count']
+                max_uses = promo['max_uses']
+                if used_count >= max_uses:
+                    logging.warning(f"activate_promocode: лимит исчерпан {used_count}/{max_uses}")
+                    return False, "Промокод уже использован максимальное количество раз"
 
-            await conn.execute(
-                "UPDATE promocodes SET used_count = used_count + 1 WHERE code=$1",
-                code
-            )
-            await conn.execute(
-                "INSERT INTO promo_activations (user_id, promo_code, activated_at) VALUES ($1, $2, $3)",
-                user_id, code, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            )
-            return True, f"✅ Промокод активирован! Вы получили {reward_text}"
+                # Начисление награды
+                reward = float(promo['reward'])
+                if promo['reward_type'] == 'bitcoin':
+                    success, new_balance = await update_user_bitcoin(user_id, reward, conn=conn)
+                    if not success:
+                        logging.error(f"activate_promocode: ошибка начисления BTC user={user_id}, amount={reward}")
+                        return False, "Ошибка начисления биткоинов"
+                    reward_text = f"{reward:.4f} BTC"
+                else:
+                    success, new_balance, _ = await update_user_balance(user_id, reward, conn=conn, allow_negative=False)
+                    if not success:
+                        logging.error(f"activate_promocode: ошибка начисления MLB user={user_id}, amount={reward}")
+                        return False, "Ошибка начисления MLB"
+                    reward_text = f"{reward:.2f} MLB"
+
+                logging.info(f"activate_promocode: награда начислена, reward_text={reward_text}")
+
+                # Обновление счётчика использований
+                await conn.execute(
+                    "UPDATE promocodes SET used_count = used_count + 1 WHERE code=$1",
+                    code
+                )
+
+                # Запись об активации
+                await conn.execute(
+                    "INSERT INTO promo_activations (user_id, promo_code, activated_at) VALUES ($1, $2, $3)",
+                    user_id, code, datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                )
+
+                logging.info(f"activate_promocode: УСПЕХ user={user_id}, code={code}")
+                return True, f"✅ Промокод активирован! Вы получили {reward_text}"
+
+            except Exception as e:
+                logging.exception(f"activate_promocode: ИСКЛЮЧЕНИЕ user={user_id}, code={code}, error={e}")
+                raise  # пробрасываем, чтобы транзакция откатилась
 
 # ==================== ФУНКЦИИ ДЛЯ ВОССТАНОВЛЕНИЯ НАЛЁТОВ ====================
 @db_retry()
