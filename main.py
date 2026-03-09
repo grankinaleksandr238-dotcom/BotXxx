@@ -6340,23 +6340,36 @@ async def promo_handler(message: Message, state: FSMContext):
 
 @dp.message(PromoActivate.code, F.text)
 async def promo_activate(message: Message, state: FSMContext):
-    if message.chat.type != 'private':
+    # Проверяем, что действительно находимся в состоянии ввода кода
+    current_state = await state.get_state()
+    if current_state != PromoActivate.code.state:
+        await message.answer("❌ Сессия устарела. Начните заново.")
         await state.clear()
         return
+
     if message.text == "◀️ Назад":
         await state.clear()
         await message.answer("Главное меню:", reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)))
         return
+
     code = message.text.strip().upper()
     user_id = message.from_user.id
+
+    # Проверка подписки
     ok, not_subscribed = await check_subscription(user_id)
     if not ok:
         await message.answer("❗️ Сначала подпишись на каналы.", reply_markup=subscription_inline(not_subscribed))
         await state.clear()
         return
-    success, msg = await activate_promocode(user_id, code)
-    await message.answer(msg, reply_markup=main_menu_keyboard(await is_admin(user_id)))
-    await state.clear()
+
+    try:
+        success, msg = await activate_promocode(user_id, code)
+        await message.answer(msg, reply_markup=main_menu_keyboard(await is_admin(user_id)))
+    except Exception as e:
+        logging.exception(f"Ошибка при активации промокода {code} для пользователя {user_id}")
+        await message.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.")
+    finally:
+        await state.clear()
 
 # ==================== РЕФЕРАЛЬНАЯ ССЫЛКА ====================
 @dp.message(F.text == "🔗 Рефералка")
