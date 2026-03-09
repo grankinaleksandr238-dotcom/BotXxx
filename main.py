@@ -4530,22 +4530,39 @@ def fight_confirmation_keyboard(fight_id: int) -> InlineKeyboardMarkup:
     ])
 
 def active_fights_keyboard(fights: List[dict]) -> InlineKeyboardMarkup:
-    """Клавиатура со списком активных боёв для пользователя."""
-    builder = InlineKeyboardBuilder()
+    """Клавиатура со списком активных боёв."""
+    kb = []
     for f in fights:
-        # Получаем имена бойцов (можно подгрузить заранее)
-        # В callback передаём id боя
-        builder.button(text=f"🥊 Бой #{f['id']}", callback_data=f"fight_view_{f['id']}")
-    builder.adjust(1)
-    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="fights_back"))
-    return builder.as_markup()
+        kb.append([InlineKeyboardButton(
+            text=f"🔴 Бой #{f['id']}",
+            callback_data=f"fight_view_{f['id']}",
+            style="danger"  # красный
+        )])
+    kb.append([InlineKeyboardButton(
+        text="◀️ Назад",
+        callback_data="fights_back",
+        style="secondary"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def fight_detail_keyboard(fight_id: int, fighter1_id: int, fighter2_id: int, name1: str, name2: str, odds1: float, odds2: float) -> InlineKeyboardMarkup:
     """Клавиатура для просмотра деталей боя и выбора бойца для ставки."""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"{name1} ({odds1:.2f})", callback_data=f"bet_fighter_{fight_id}_{fighter1_id}"),
-         InlineKeyboardButton(text=f"{name2} ({odds2:.2f})", callback_data=f"bet_fighter_{fight_id}_{fighter2_id}")],
-        [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="fights_back")]
+        [InlineKeyboardButton(
+            text=f"{name1} ({odds1:.2f})", 
+            callback_data=f"bet_fighter_{fight_id}_{fighter1_id}",
+            style="primary"  # синяя
+        ),
+         InlineKeyboardButton(
+            text=f"{name2} ({odds2:.2f})", 
+            callback_data=f"bet_fighter_{fight_id}_{fighter2_id}",
+            style="primary"  # синяя
+        )],
+        [InlineKeyboardButton(
+            text="◀️ Назад к списку", 
+            callback_data="fights_back",
+            style="secondary"  # серая
+        )]
     ])
 
 def bet_amount_keyboard(fight_id: int, fighter_id: int) -> InlineKeyboardMarkup:
