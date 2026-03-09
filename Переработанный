@@ -11135,13 +11135,14 @@ async def buy_business_confirm(message: Message, state: FSMContext):
         return
     
     user_id = message.from_user.id
-    
     max_biz = await get_setting_int("business_max_businesses")
-    if max_biz > 0:
-        current_biz = await get_user_businesses(user_id)
-        if len(current_biz) >= max_biz:
-            await message.answer(f"❌ Вы не можете купить больше {max_biz} бизнесов.")
-            return
+    
+    # (Предварительная проверка не обязательна, но можно оставить для быстроты)
+    # if max_biz > 0:
+    #     current_biz = await get_user_businesses(user_id)
+    #     if len(current_biz) >= max_biz:
+    #         await message.answer(f"❌ Вы не можете купить больше {max_biz} бизнесов.")
+    #         return
     
     btc_balance = await get_user_bitcoin(user_id)
     if btc_balance < price:
@@ -11150,6 +11151,15 @@ async def buy_business_confirm(message: Message, state: FSMContext):
     
     async with db_pool.acquire() as conn:
         async with conn.transaction():
+            # Блокируем пользователя для проверки лимита
+            if max_biz > 0:
+                # Блокировка строки пользователя
+                await conn.fetchval("SELECT 1 FROM users WHERE user_id=$1 FOR UPDATE", user_id)
+                current_biz = await conn.fetchval("SELECT COUNT(*) FROM user_businesses WHERE user_id=$1", user_id)
+                if current_biz >= max_biz:
+                    await message.answer(f"❌ Вы не можете купить больше {max_biz} бизнесов.")
+                    return
+            
             success, new_btc = await update_user_bitcoin(user_id, -price, conn=conn)
             if not success:
                 await message.answer("❌ Ошибка при списании BTC.")
