@@ -6922,97 +6922,99 @@ async def heist_join_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
     chat_id = callback.message.chat.id
 
-    # Проверяем, что чат активирован
-    if not await is_chat_confirmed(chat_id):
-        await callback.answer("❌ Этот чат не активирован.", show_alert=True)
-        return
+    # Логируем начало
+    logging.info(f"heist_join_callback: пользователь {user_id} пытается присоединиться к налёту {heist_id}")
 
-    # Проверяем бан
-    if await is_banned(user_id) and not await is_admin(user_id):
-        await callback.answer("⛔ Вы заблокированы.", show_alert=True)
-        return
-
-    # Проверяем, что пользователь не админ чата
     try:
-        chat_member = await bot.get_chat_member(chat_id, user_id)
-        if chat_member.status in ['creator', 'administrator']:
-            await callback.answer("❌ Администраторы не могут участвовать в налётах.", show_alert=True)
+        # Проверяем, что чат активирован
+        if not await is_chat_confirmed(chat_id):
+            await callback.answer("❌ Этот чат не активирован.", show_alert=True)
             return
-    except Exception as e:
-        logging.error(f"Error checking chat admin status: {e}")
 
-    await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
+        # Проверяем бан
+        if await is_banned(user_id) and not await is_admin(user_id):
+            await callback.answer("⛔ Вы заблокированы.", show_alert=True)
+            return
 
-    async with db_pool.acquire() as conn:
-        async with conn.transaction():
-            # Получаем налёт
-            heist = await conn.fetchrow(
-                "SELECT * FROM heists WHERE id=$1 AND status='joining' AND join_until > NOW() FOR UPDATE",
-                heist_id
-            )
-            if not heist:
-                await callback.answer("❌ Налёт уже завершён или не найден.", show_alert=True)
-                return
+        # Проверка на администратора чата УДАЛЕНА – теперь админы тоже могут участвовать
 
-            # Проверка максимального количества участников
-            max_participants = await get_setting_int("heist_max_participants")
-            if max_participants > 0:
-                current_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
-                if current_count >= max_participants:
-                    await callback.answer("❌ В налёте уже максимальное количество участников.", show_alert=True)
+        await ensure_user_exists(user_id, callback.from_user.username, callback.from_user.first_name)
+
+        async with db_pool.acquire() as conn:
+            async with conn.transaction():
+                # Получаем налёт
+                heist = await conn.fetchrow(
+                    "SELECT * FROM heists WHERE id=$1 AND status='joining' AND join_until > NOW() FOR UPDATE",
+                    heist_id
+                )
+                if not heist:
+                    await callback.answer("❌ Налёт уже завершён или не найден.", show_alert=True)
                     return
 
-            # Проверка кулдауна участия
-            participant_cooldown = await get_setting_int("heist_participant_cooldown_hours") * 3600
-            ok, remaining = await check_global_cooldown(user_id, "heist_participate", participant_cooldown)
-            if not ok:
-                await callback.answer(f"⏳ Ты ещё не остыл после прошлого налёта. Подожди {format_time_remaining(remaining)}.", show_alert=True)
-                return
+                # Проверка максимального количества участников
+                max_participants = await get_setting_int("heist_max_participants")
+                if max_participants > 0:
+                    current_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
+                    if current_count >= max_participants:
+                        await callback.answer("❌ В налёте уже максимальное количество участников.", show_alert=True)
+                        return
 
-            share_min = await get_setting_int("heist_share_min")
-            share_max = await get_setting_int("heist_share_max")
-            share = random.randint(share_min, share_max)
+                # Проверка кулдауна участия
+                participant_cooldown = await get_setting_int("heist_participant_cooldown_hours") * 3600
+                ok, remaining = await check_global_cooldown(user_id, "heist_participate", participant_cooldown)
+                if not ok:
+                    await callback.answer(
+                        f"⏳ Ты ещё не остыл после прошлого налёта. Подожди {format_time_remaining(remaining)}.",
+                        show_alert=True
+                    )
+                    return
 
-            # Добавляем участника
-            success = await add_participant_to_heist(heist_id, user_id, share)
-            if not success:
-                await callback.answer("❌ Ты уже участвуешь в этом налёте.", show_alert=True)
-                return
+                share_min = await get_setting_int("heist_share_min")
+                share_max = await get_setting_int("heist_share_max")
+                share = random.randint(share_min, share_max)
 
-            # Устанавливаем кулдаун участия
-            await set_global_cooldown(user_id, "heist_participate", participant_cooldown)
+                # Добавляем участника
+                success = await add_participant_to_heist(heist_id, user_id, share)
+                if not success:
+                    await callback.answer("❌ Ты уже участвуешь в этом налёте.", show_alert=True)
+                    return
 
-            # Получаем имя для фразы
-            user_info = await conn.fetchrow("SELECT first_name FROM users WHERE user_id=$1", user_id)
-            name = user_info['first_name'] if user_info else f"ID{user_id}"
-            config = HEIST_TYPES[heist['event_type']]
-            phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]), name=name)
+                # Устанавливаем кулдаун участия
+                await set_global_cooldown(user_id, "heist_participate", participant_cooldown)
 
-            # Обновляем количество участников в сообщении
-            participants_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
-            # Редактируем исходное сообщение, чтобы показать новое количество
-            if heist['message_id']:
-                try:
-                    # Пытаемся обновить сообщение, добавляя строку с количеством участников
-                    new_text = callback.message.text
-                    if "👥 Участников:" not in new_text:
-                        new_text += f"\n\n👥 Участников: {participants_count}"
-                    else:
-                        # Заменяем существующую строку
-                        lines = new_text.split('\n')
-                        for i, line in enumerate(lines):
-                            if line.startswith("👥 Участников:"):
-                                lines[i] = f"👥 Участников: {participants_count}"
-                                break
-                        new_text = '\n'.join(lines)
-                    await bot.edit_message_text(new_text, chat_id, heist['message_id'])
-                except Exception as e:
-                    logging.error(f"Failed to edit heist message: {e}")
+                # Получаем имя для фразы
+                user_info = await conn.fetchrow("SELECT first_name FROM users WHERE user_id=$1", user_id)
+                name = user_info['first_name'] if user_info else f"ID{user_id}"
+                config = HEIST_TYPES[heist['event_type']]
+                phrase = get_random_phrase(config.get('phrases_join', ["✅ {name} присоединился к налёту!"]), name=name)
 
-    # Отправляем подтверждение пользователю (короткое)
-    await callback.answer("✅ Вы участвуете в налёте!")
-    # Отправляем фразу в чат
-    await safe_send_chat(chat_id, phrase)
+                # Обновляем количество участников в сообщении
+                participants_count = await conn.fetchval("SELECT COUNT(*) FROM heist_participants WHERE heist_id=$1", heist_id)
+                if heist['message_id']:
+                    try:
+                        new_text = callback.message.text
+                        if "👥 Участников:" not in new_text:
+                            new_text += f"\n\n👥 Участников: {participants_count}"
+                        else:
+                            lines = new_text.split('\n')
+                            for i, line in enumerate(lines):
+                                if line.startswith("👥 Участников:"):
+                                    lines[i] = f"👥 Участников: {participants_count}"
+                                    break
+                            new_text = '\n'.join(lines)
+                        await bot.edit_message_text(new_text, chat_id, heist['message_id'])
+                    except Exception as e:
+                        logging.error(f"Не удалось обновить сообщение налёта: {e}")
+
+        # Успех
+        await callback.answer("✅ Вы участвуете в налёте!")
+        await safe_send_chat(chat_id, phrase)
+        logging.info(f"heist_join_callback: пользователь {user_id} успешно присоединился к налёту {heist_id}")
+
+    except Exception as e:
+        logging.exception(f"Критическая ошибка в heist_join_callback: {e}")
+        await callback.answer("❌ Произошла внутренняя ошибка. Попробуйте позже.", show_alert=True)
+
 
 # ==================== ОБРАБОТЧИК ВЫБОРА КИДАЛОВА (ИЗ ЛС) ====================
 @dp.callback_query(F.data.startswith("betray_choice_yes_"))
