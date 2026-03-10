@@ -3963,12 +3963,12 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
     if row2:
         builder.row(*row2)
 
-    row3 = []
+        row3 = []
     if "manage_businesses" in permissions:
         row3.append(KeyboardButton(text="🏪 Бизнесы"))
     if "manage_exchange" in permissions:
         row3.append(KeyboardButton(text="💼 Биржа"))
-        if "manage_media" in permissions:
+    if "manage_media" in permissions:
         row3.append(KeyboardButton(text="🖼 Медиа"))
     if row3:
         builder.row(*row3)
