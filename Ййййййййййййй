@@ -3978,8 +3978,9 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
         row4.append(KeyboardButton(text="📋 Управление заданиями"))
     if "view_stats" in permissions:
         row4.append(KeyboardButton(text="📊 Статистика"))
-    if "broadcast" in permissions:
+        if "broadcast" in permissions:
         row4.append(KeyboardButton(text="📢 Рассылка"))
+        row4.append(KeyboardButton(text="📢 Рассылка в чаты"))
     if row4:
         builder.row(*row4)
 
@@ -4373,7 +4374,7 @@ def fighter_selection_keyboard(fighters: List[dict], page: int, total_pages: int
     """
     builder = InlineKeyboardBuilder()
     for f in fighters:
-        builder.button(text=f["name"], callback_data=f"{callback_prefix}_{f['id']}", style="primary")
+        builder.button(text=f["name"], callback_data=f"{callback_prefix}_{f['id']}")
     builder.adjust(1)
     nav_buttons = []
     if page > 1:
@@ -4395,16 +4396,11 @@ def fight_confirmation_keyboard(fight_id: int) -> InlineKeyboardMarkup:
 def active_fights_keyboard(fights: List[dict]) -> InlineKeyboardMarkup:
     """Клавиатура со списком активных боёв."""
     kb = []
-    for f in fights:
-        kb.append([InlineKeyboardButton(
-            text=f"🔴 Бой #{f['id']}",
-            callback_data=f"fv_{f['id']}",
-            style="danger"
-        )])
+    
     kb.append([InlineKeyboardButton(
         text="◀️ Назад",
-        callback_data="fights_back",
-        style="secondary"
+        callback_data="fights_back"
+        
     )])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -4413,18 +4409,18 @@ def fight_detail_keyboard(fight_id: int, fighter1_id: int, fighter2_id: int, nam
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(
             text=f"{name1} ({odds1:.2f})", 
-            callback_data=f"bf_{fight_id}_{fighter1_id}",
-            style="primary"
+            callback_data=f"bf_{fight_id}_{fighter1_id}"
+            
         ),
          InlineKeyboardButton(
             text=f"{name2} ({odds2:.2f})", 
-            callback_data=f"bf_{fight_id}_{fighter2_id}",
-            style="primary"
+            callback_data=f"bf_{fight_id}_{fighter2_id}"
+            
         )],
         [InlineKeyboardButton(
             text="◀️ Назад к списку", 
-            callback_data="fights_back",
-            style="secondary"
+            callback_data="fights_back"
+            
         )]
     ])
 
