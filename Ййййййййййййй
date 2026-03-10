@@ -6235,7 +6235,7 @@ async def underground_fights_menu(message: Message):
     await send_with_media(
         message.chat.id,
         text,
-        media_key='fights',
+        media_key='f',
         reply_markup=kb.as_markup()
     )
 
