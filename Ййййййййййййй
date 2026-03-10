@@ -3958,6 +3958,14 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
         row2.append(KeyboardButton(text="🎫 Промокоды"))
     if row2:
         builder.row(*row2)
+        # Каналы и чаты
+    row_channels = []
+    if "manage_channels" in permissions:
+        row_channels.append(KeyboardButton(text="📢 Каналы"))
+    if "manage_chats" in permissions:
+        row_channels.append(KeyboardButton(text="🤖 Чаты"))
+    if row_channels:
+        builder.row(*row_channels)
 
     row3 = []
     if "manage_businesses" in permissions:
