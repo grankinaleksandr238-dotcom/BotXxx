@@ -6200,28 +6200,38 @@ async def underground_fights_menu(message: Message):
         )
         return
 
-    text = "🥊 <b>Активные бои:</b>\n\n"
-    kb = InlineKeyboardBuilder()
-    for fight in fights:
-        f1 = await get_fighter(fight['fighter1_id'])
-        f2 = await get_fighter(fight['fighter2_id'])
-        if not f1 or not f2:
-            continue
-        total1 = float(fight['total_bets_fighter1'])
-        total2 = float(fight['total_bets_fighter2'])
-        commission = fight['commission_percent']
-        odds1 = calculate_odds(total1, total2, commission, True)
-        odds2 = calculate_odds(total1, total2, commission, False)
-        time_left = (fight['end_time'] - datetime.now(timezone.utc)).total_seconds()
-        time_str = format_time_remaining(int(time_left)) if time_left > 0 else "завершается"
-        text += f"🆔 {fight['id']}: {f1['name']} vs {f2['name']}\n"
-        text += f"⏳ До конца: {time_str}\n"
-        text += f"📊 Коэф: {f1['name']} – {odds1:.2f}, {f2['name']} – {odds2:.2f}\n"
-        text += f"💰 Пул: {total1+total2:.2f} MLB\n\n"
+    text = "🥊 <b>Активные бои</b>\n\n"
+separator = "─────────────────────"
+for fight in fights:
+    f1 = await get_fighter(fight['fighter1_id'])
+    f2 = await get_fighter(fight['fighter2_id'])
+    if not f1 or not f2:
+        continue
+    total1 = float(fight['total_bets_fighter1'])
+    total2 = float(fight['total_bets_fighter2'])
+    commission = fight['commission_percent']
+    odds1 = calculate_odds(total1, total2, commission, True)
+    odds2 = calculate_odds(total1, total2, commission, False)
+    time_left = (fight['end_time'] - datetime.now(timezone.utc)).total_seconds()
+    time_str = format_time_remaining(int(time_left)) if time_left > 0 else "завершается"
+
+    text += (
+        f"<b>Бой #{fight['id']}</b>\n"
+        f"👤 {f1['name']}  vs  👤 {f2['name']}\n"
+        f"⏳ До конца: {time_str}\n"
+        f"📊 Коэф: {f1['name']} – {odds1:.2f}, {f2['name']} – {odds2:.2f}\n"
+        f"💰 Общий пул: {total1+total2:.2f} MLB\n"
+        f"{separator}\n\n"
+    )
         kb.button(text=f"🥊 Бой #{fight['id']}", callback_data=f"fv_{fight['id']}")
     kb.adjust(1)
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="fights_back"))
-    await message.answer(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+    await send_with_media(
+    message.chat.id,
+    text,
+    media_key='fights',   # ключ, под которым загрузите картинку
+    reply_markup=kb.as_markup()
+)
 
 @dp.callback_query(F.data.startswith("fv_"))
 async def fight_view_callback(callback: CallbackQuery):
