@@ -6173,6 +6173,8 @@ async def my_purchases(message: Message):
     await message.answer(text, reply_markup=main_menu_keyboard(await is_admin(user_id)), parse_mode="HTML")
 
 # ==================== ПОДПОЛЬНЫЕ БОИ (ПОЛЬЗОВАТЕЛЬСКОЕ МЕНЮ) ====================
+# ==================== ПОДПОЛЬНЫЕ БОИ (ПОЛЬЗОВАТЕЛЬСКОЕ МЕНЮ) ====================
+
 @dp.message(F.text == "🥊 Подпольные бои")
 async def underground_fights_menu(message: Message):
     if message.chat.type != 'private':
@@ -6229,12 +6231,14 @@ async def underground_fights_menu(message: Message):
 
     kb.adjust(1)
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="fights_back"))
+
     await send_with_media(
         message.chat.id,
         text,
         media_key='fights',
         reply_markup=kb.as_markup()
     )
+
 
 @dp.callback_query(F.data.startswith("fv_"))
 async def fight_view_callback(callback: CallbackQuery):
@@ -6266,13 +6270,16 @@ async def fight_view_callback(callback: CallbackQuery):
         f"💰 Общий пул: {total1+total2:.2f} MLB\n\n"
         f"<b>Выбери, на кого поставишь:</b>"
     )
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=f"{f1['name']} ({odds1:.2f})", callback_data=f"bf_{fight_id}_{fight['fighter1_id']}"),
          InlineKeyboardButton(text=f"{f2['name']} ({odds2:.2f})", callback_data=f"bf_{fight_id}_{fight['fighter2_id']}")],
         [InlineKeyboardButton(text="◀️ Назад к списку", callback_data="fights_back")]
     ])
+
     await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await callback.answer()
+
 
 @dp.callback_query(F.data == "fights_back")
 async def fights_back_callback(callback: CallbackQuery):
@@ -6285,7 +6292,8 @@ async def fights_back_callback(callback: CallbackQuery):
             parse_mode="HTML"
         )
         return
-    text = "🥊 <b>Активные бои:</b>\n\n"
+    text = "🥊 <b>Активные бои</b>\n\n"
+    separator = "─────────────────────"
     kb = InlineKeyboardBuilder()
     for fight in fights:
         f1 = await get_fighter(fight['fighter1_id'])
@@ -6299,14 +6307,20 @@ async def fights_back_callback(callback: CallbackQuery):
         odds2 = calculate_odds(total1, total2, commission, False)
         time_left = (fight['end_time'] - datetime.now(timezone.utc)).total_seconds()
         time_str = format_time_remaining(int(time_left)) if time_left > 0 else "завершается"
-        text += f"🆔 {fight['id']}: {f1['name']} vs {f2['name']}\n"
-        text += f"⏳ До конца: {time_str}\n"
-        text += f"📊 Коэф: {f1['name']} – {odds1:.2f}, {f2['name']} – {odds2:.2f}\n"
-        text += f"💰 Пул: {total1+total2:.2f} MLB\n\n"
+        text += (
+            f"<b>Бой #{fight['id']}</b>\n"
+            f"👤 {f1['name']}  vs  👤 {f2['name']}\n"
+            f"⏳ До конца: {time_str}\n"
+            f"📊 Коэф: {f1['name']} – {odds1:.2f}, {f2['name']} – {odds2:.2f}\n"
+            f"💰 Общий пул: {total1+total2:.2f} MLB\n"
+            f"{separator}\n\n"
+        )
         kb.button(text=f"🥊 Бой #{fight['id']}", callback_data=f"fv_{fight['id']}")
     kb.adjust(1)
     kb.row(InlineKeyboardButton(text="◀️ Назад", callback_data="fights_back"))
     await callback.message.edit_text(text, reply_markup=kb.as_markup(), parse_mode="HTML")
+    await callback.answer()
+
 
 @dp.callback_query(F.data.startswith("bf_"))
 async def bet_fighter_info_callback(callback: CallbackQuery, state: FSMContext):
@@ -6357,6 +6371,7 @@ async def bet_fighter_info_callback(callback: CallbackQuery, state: FSMContext):
     
     await callback.answer()
 
+
 @dp.callback_query(F.data.startswith("bc_"))
 async def bet_confirm_fighter_callback(callback: CallbackQuery, state: FSMContext):
     """Переход к вводу суммы после просмотра информации о бойце."""
@@ -6374,6 +6389,7 @@ async def bet_confirm_fighter_callback(callback: CallbackQuery, state: FSMContex
     await state.set_state(PlaceBet.amount)
     await callback.answer()
     
+
 @dp.message(PlaceBet.amount, F.text)
 async def bet_amount_handler(message: Message, state: FSMContext):
     if message.text == "◀️ Назад":
@@ -6422,6 +6438,7 @@ async def bet_amount_handler(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
     await state.set_state(PlaceBet.confirm)
 
+
 @dp.callback_query(PlaceBet.confirm, F.data.startswith("bet_ok_"))
 async def bet_confirm_callback(callback: CallbackQuery, state: FSMContext):
     fight_id = int(callback.data.split("_")[2])
@@ -6442,12 +6459,14 @@ async def bet_confirm_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
     await callback.answer()
 
+
 @dp.callback_query(PlaceBet.confirm, F.data == "bet_cancel")
 async def bet_cancel_callback(callback: CallbackQuery, state: FSMContext):
     await callback.answer("❌ Отменено")
     await state.clear()
     await underground_fights_menu(callback.message)
 
+# ==================== КОНЕЦ ЧАСТИ 3 ====================
 # ==================== КОНЕЦ ЧАСТИ 3 ====================
 # ==================== ЧАСТЬ 4: ПОЛЬЗОВАТЕЛЬСКИЕ ХЕНДЛЕРЫ – ИГРЫ КАЗИНО И ПОВТОР СТАВОК ====================
 # ----- Кости -----
