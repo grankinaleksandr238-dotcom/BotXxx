@@ -36,7 +36,7 @@ from aiogram.exceptions import (
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.utils.keyboard import ReplyKeyboardBuilder, InlineKeyboardBuilder
-from aiogram.utils.formatting import Text, Bold, Italic, Code, Pre, Underline, Strike, Spoiler, BlockQuote
+
 
 # ==================== НАСТРОЙКИ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
