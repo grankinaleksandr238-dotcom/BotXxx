@@ -3970,7 +3970,7 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
         row3.append(KeyboardButton(text="💼 Биржа"))
     if "manage_media" in permissions:
         row3.append(KeyboardButton(text="🖼 Медиа"))
-    if row3:
+        if row3:
         builder.row(*row3)
 
     row4 = []
@@ -3978,11 +3978,15 @@ def admin_main_keyboard(permissions: List[str]) -> ReplyKeyboardMarkup:
         row4.append(KeyboardButton(text="📋 Управление заданиями"))
     if "view_stats" in permissions:
         row4.append(KeyboardButton(text="📊 Статистика"))
-        if "broadcast" in permissions:
-        row4.append(KeyboardButton(text="📢 Рассылка"))
-        row4.append(KeyboardButton(text="📢 Рассылка в чаты"))
     if row4:
         builder.row(*row4)
+
+    row_broadcast = []
+    if "broadcast" in permissions:
+        row_broadcast.append(KeyboardButton(text="📢 Рассылка"))
+        row_broadcast.append(KeyboardButton(text="📢 Рассылка в чаты"))
+    if row_broadcast:
+        builder.row(*row_broadcast)
 
     row5 = []
     if "edit_settings" in permissions:
@@ -5062,9 +5066,9 @@ async def show_top(message: Message, field: str, title: str, page: int = 1):
     if total_pages > 1:
         builder = InlineKeyboardBuilder()
         if page > 1:
-            builder.button(text="⬅️", callback_data=f"top_{field}_{page-1}", style="secondary")
+            builder.button(text="⬅️", callback_data=f"top_{field}_{page-1}")
         if page < total_pages:
-            builder.button(text="➡️", callback_data=f"top_{field}_{page+1}", style="secondary")
+            builder.button(text="➡️", callback_data=f"top_{field}_{page+1}")
         kb = builder.as_markup()
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
