@@ -13451,6 +13451,77 @@ async def clear_logs_cancel(callback: CallbackQuery):
     await debug_menu(callback.message)
 
 # ==================== КОНЕЦ ЧАСТИ 12 ====================
+# ==================== КОНЕЦ ЧАСТИ 12 ====================
+
+# ==================== VPN ФУНКЦИИ ====================
+
+import paramiko
+import time
+import os
+
+async def create_vpn_client(user_id: int, days: int) -> str:
+    """
+    Создаёт VPN-клиента через SSH и возвращает конфиг.
+    days: срок в днях (1, 7, 30)
+    """
+    client_name = f"user_{user_id}_{int(time.time())}"
+    client_ip = f"10.8.0.{user_id % 250 + 10}"  # генерируем IP на основе user_id
+    
+    try:
+        # Подключаемся по SSH к серверу
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(
+            hostname='212.109.199.46',
+            username='root',
+            password='Alexandr997'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ ОТ СЕРВЕРА !!!
+        )
+        
+        # Генерируем ключи
+        stdin, stdout, stderr = ssh.exec_command("wg genkey")
+        private_key = stdout.read().decode().strip()
+        
+        stdin, stdout, stderr = ssh.exec_command(f"echo '{private_key}' | wg pubkey")
+        public_key = stdout.read().decode().strip()
+        
+        # Получаем публичный ключ сервера
+        stdin, stdout, stderr = ssh.exec_command("grep PrivateKey /etc/amnezia/amneziawg/awg0.conf | cut -d' ' -f3 | wg pubkey")
+        server_public_key = stdout.read().decode().strip()
+        
+        # Добавляем клиента в конфиг сервера
+        commands = [
+            f"echo '' >> /etc/amnezia/amneziawg/awg0.conf",
+            f"echo '[Peer]' >> /etc/amnezia/amneziawg/awg0.conf",
+            f"echo 'PublicKey = {public_key}' >> /etc/amnezia/amneziawg/awg0.conf",
+            f"echo 'AllowedIPs = {client_ip}/32' >> /etc/amnezia/amneziawg/awg0.conf",
+            f"systemctl restart awg-quick@awg0"
+        ]
+        
+        for cmd in commands:
+            ssh.exec_command(cmd)
+            time.sleep(0.5)
+        
+        # Собираем конфиг для клиента
+        config = f"""[Interface]
+PrivateKey = {private_key}
+Address = {client_ip}/24
+DNS = 77.88.8.8, 77.88.8.1
+
+[Peer]
+PublicKey = {server_public_key}
+Endpoint = 212.109.199.46:39743
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+"""
+        
+        ssh.close()
+        return config
+        
+    except Exception as e:
+        logging.error(f"VPN creation error for user {user_id}: {e}")
+        return None
+
+# ==================== КОНЕЦ ====================
 
 if __name__ == '__main__':
     try:
@@ -13459,5 +13530,6 @@ if __name__ == '__main__':
         logging.info("Бот остановлен пользователем")
     except Exception as e:
         logging.critical(f"Необработанная ошибка: {e}", exc_info=True)
+
 
 # ==================== КОНЕЦ ЧАСТИ 11 ====================
