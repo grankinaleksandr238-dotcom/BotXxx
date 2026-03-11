@@ -346,14 +346,19 @@ DEFAULT_SETTINGS = {
     "task_penalty_reputation": "1",
 
     # ----- ПРОМОКОДЫ -----
-    "promocode_max_uses_default": "1",
-
+    "promocode_max_uses_default": "1",   
+   
     # ----- ПОДПОЛЬНЫЕ БОИ -----
     "fight_min_bet": "10",
     "fight_max_bet": "1000",
     "fight_commission_percent": "5",
     "fight_duration_minutes": "60",
     "fight_max_odds": "10.0",  # добавлено для calculate_odds
+
+    # ----- VPN ПОДПИСКИ -----
+    "vpn_price_1day": "100",
+    "vpn_price_7days": "500",
+    "vpn_price_30days": "1500",
 }
 
 # ==================== ТИПЫ БИЗНЕСОВ ====================
@@ -531,6 +536,11 @@ SETTINGS_CATEGORIES = {
         ("fight_max_bet", "💰 Максимальная ставка (MLB)"),
         ("fight_commission_percent", "💸 Комиссия бота (%)"),
         ("fight_duration_minutes", "⏱ Длительность боя по умолчанию (мин)"),
+    ],
+    "⚙️ VPN подписки": [
+        ("vpn_price_1day", "🕐 Цена 1 дня (MLB)"),
+        ("vpn_price_7days", "🕒 Цена 7 дней (MLB)"),
+        ("vpn_price_30days", "📅 Цена 30 дней (MLB)"),
     ],
 }
 
@@ -6059,20 +6069,25 @@ async def vpn_shop_menu(message: Message):
     user_id = message.from_user.id
     balance = await get_user_balance(user_id)
     
+    # Получаем цены из настроек
+    price_1day = await get_setting_int("vpn_price_1day")
+    price_7days = await get_setting_int("vpn_price_7days")
+    price_30days = await get_setting_int("vpn_price_30days")
+    
     text = (
         f"🔐 <b>Приватный VPN</b>\n\n"
         f"💰 Твой баланс: {balance:.2f} MLB\n\n"
         f"<b>Тарифы:</b>\n"
-        f"• 🕐 1 день — 100 MLB\n"
-        f"• 🕒 1 неделя — 500 MLB\n"
-        f"• 📅 1 месяц — 1500 MLB\n\n"
+        f"• 🕐 1 день — {price_1day} MLB\n"
+        f"• 🕒 1 неделя — {price_7days} MLB\n"
+        f"• 📅 1 месяц — {price_30days} MLB\n\n"
         f"После покупки ты получишь ключ для приложения AmneziaVPN."
     )
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🕐 1 день (100 MLB)", callback_data="vpn_1day")],
-        [InlineKeyboardButton(text="🕒 1 неделя (500 MLB)", callback_data="vpn_7days")],
-        [InlineKeyboardButton(text="📅 1 месяц (1500 MLB)", callback_data="vpn_30days")],
+        [InlineKeyboardButton(text=f"🕐 1 день ({price_1day} MLB)", callback_data="vpn_1day")],
+        [InlineKeyboardButton(text=f"🕒 1 неделя ({price_7days} MLB)", callback_data="vpn_7days")],
+        [InlineKeyboardButton(text=f"📅 1 месяц ({price_30days} MLB)", callback_data="vpn_30days")],
         [InlineKeyboardButton(text="◀️ Назад в магазин", callback_data="vpn_back")]
     ])
     
@@ -6086,10 +6101,15 @@ async def vpn_buy_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
     plan = callback.data.split("_")[1]
     
+    # Получаем цены из настроек
+    price_1day = await get_setting_int("vpn_price_1day")
+    price_7days = await get_setting_int("vpn_price_7days")
+    price_30days = await get_setting_int("vpn_price_30days")
+    
     prices = {
-        "1day": 100,
-        "7days": 500,
-        "30days": 1500
+        "1day": price_1day,
+        "7days": price_7days,
+        "30days": price_30days
     }
     
     days_map = {
@@ -6104,6 +6124,8 @@ async def vpn_buy_callback(callback: CallbackQuery):
         
     price = prices[plan]
     days = days_map[plan]
+    
+    # ... остальной код без изменений ...
     
     # Проверяем баланс
     balance = await get_user_balance(user_id)
