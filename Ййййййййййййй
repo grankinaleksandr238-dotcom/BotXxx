@@ -13625,16 +13625,17 @@ async def clear_logs_cancel(callback: CallbackQuery):
     await debug_menu(callback.message)
 
 # ==================== КОНЕЦ ЧАСТИ 12 ====================
-# ==================== КОНЕЦ ЧАСТИ 12 ====================
-
-# ==================== VPN ФУНКЦИИ ====================
 # ==================== VPN ФУНКЦИИ ====================
 
 import paramiko
 import time
 import os
 
-async def create_vpn_client(user_id: int, days: int) -> str:
+async def create_vpn_client(user_id: int, days: int) -> dict:
+    """
+    Создаёт VPN-клиента в Docker-контейнере OpenVPN.
+    Возвращает словарь с ключами 'config' и 'client_name'
+    """
     client_name = f"user_{user_id}_{int(time.time())}"
     
     try:
@@ -13656,6 +13657,7 @@ async def create_vpn_client(user_id: int, days: int) -> str:
         if exit_status != 0:
             error = stderr.read().decode()
             logging.error(f"EasyRSA error: {error}")
+            ssh.close()
             return None
         
         # Получаем сертификат клиента
@@ -13712,21 +13714,30 @@ key-direction 1
 </tls-auth>
 """
         
-        return config
+        return {
+            'config': config,
+            'client_name': client_name
+        }
         
     except Exception as e:
         logging.error(f"VPN creation error for user {user_id}: {e}")
         return None
-                
+
+
 @dp.callback_query(F.data.startswith("vpn_"))
 async def vpn_buy_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
     plan = callback.data.split("_")[1]
     
+    # Получаем цены из настроек
+    price_1day = await get_setting_int("vpn_price_1day")
+    price_7days = await get_setting_int("vpn_price_7days")
+    price_30days = await get_setting_int("vpn_price_30days")
+    
     prices = {
-        "1day": 100,
-        "7days": 500,
-        "30days": 1500
+        "1day": price_1day,
+        "7days": price_7days,
+        "30days": price_30days
     }
     
     days_map = {
@@ -13765,9 +13776,12 @@ async def vpn_buy_callback(callback: CallbackQuery):
     )
     
     # Создаём клиента
-    config = await create_vpn_client(user_id, days)
+    result = await create_vpn_client(user_id, days)
     
-    if config:
+    if result:
+        config = result['config']
+        client_name = result['client_name']
+        
         # Отправляем конфиг
         await callback.message.edit_text(
             f"✅ <b>VPN активирован!</b>\n\n"
@@ -13783,13 +13797,13 @@ async def vpn_buy_callback(callback: CallbackQuery):
             parse_mode="HTML"
         )
         
-        # Записываем в БД
+        # Записываем в БД с client_name
         async with db_pool.acquire() as conn:
             expires = datetime.now(timezone.utc) + timedelta(days=days)
             await conn.execute("""
-                INSERT INTO vpn_purchases (user_id, days, price, expires_at)
-                VALUES ($1, $2, $3, $4)
-            """, user_id, days, price, expires)
+                INSERT INTO vpn_purchases (user_id, days, price, expires_at, client_name)
+                VALUES ($1, $2, $3, $4, $5)
+            """, user_id, days, price, expires, client_name)
     else:
         # Ошибка — возвращаем деньги
         await update_user_balance(user_id, price, allow_negative=False)
@@ -13801,20 +13815,22 @@ async def vpn_buy_callback(callback: CallbackQuery):
     
     await callback.answer()
 
-# ==================== КОНЕЦ ====================
-# ==================== КОНЕЦ ЧАСТИ 12 ====================
+
+@dp.callback_query(F.data == "vpn_back")
+async def vpn_back_callback(callback: CallbackQuery):
+    await callback.message.delete()
+    await shop_menu(callback.message)
 
 
-
-# 👇 СЮДА ВСТАВЛЯЕМ НОВУЮ ФУНКЦИЮ
 async def vpn_expiration_checker():
     """Раз в час проверяет истекшие VPN-подписки и удаляет клиентов."""
     while True:
         try:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(3600)  # проверка раз в час
             now = datetime.now(timezone.utc)
             
             async with db_pool.acquire() as conn:
+                # Находим просроченные активные подписки
                 expired = await conn.fetch("""
                     SELECT user_id, client_name FROM vpn_purchases 
                     WHERE expires_at <= $1 AND status = 'active'
@@ -13824,6 +13840,7 @@ async def vpn_expiration_checker():
                     user_id = row['user_id']
                     client_name = row['client_name']
                     
+                    # Подключаемся по SSH
                     ssh = paramiko.SSHClient()
                     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                     ssh.connect(
@@ -13833,19 +13850,23 @@ async def vpn_expiration_checker():
                         timeout=10
                     )
                     
+                    # Отзываем сертификат
                     cmd_revoke = f"docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa revoke {client_name}\""
                     ssh.exec_command(cmd_revoke)
                     
+                    # Обновляем CRL
                     cmd_crl = "docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa gen-crl\""
                     ssh.exec_command(cmd_crl)
                     
                     ssh.close()
                     
+                    # Обновляем статус в БД
                     await conn.execute("""
                         UPDATE vpn_purchases SET status = 'expired' 
                         WHERE user_id = $1 AND client_name = $2
                     """, user_id, client_name)
                     
+                    # Уведомляем пользователя
                     await safe_send_message(
                         user_id,
                         "⏰ <b>Срок действия твоей VPN-подписки истёк.</b>\n"
@@ -13857,6 +13878,10 @@ async def vpn_expiration_checker():
         except Exception as e:
             logging.error(f"VPN expiration checker error: {e}")
             await asyncio.sleep(60)
+
+# ==================== КОНЕЦ ====================
+
+ 
 
 
 # ==================== КОНЕЦ ====================
