@@ -7212,18 +7212,45 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     amount = data['amount']
     bet_type = data['bet_type']
     bet_number = data.get('number')
+    
     anim = await message.answer("🎡 <b>Крутим рулетку...</b>", parse_mode="HTML")
-    for _ in range(3):
-        await asyncio.sleep(0.5)
-        await anim.edit_text("🎡 • •", parse_mode="HTML")
-        await asyncio.sleep(0.5)
-        await anim.edit_text("• 🎡 •", parse_mode="HTML")
-        await asyncio.sleep(0.5)
-        await anim.edit_text("• • 🎡", parse_mode="HTML")
-
+    
+    # Симуляция быстрого вращения с мелькающими числами
+    for i in range(12):
+        fake_number = random.randint(0, 36)
+        if fake_number == 0:
+            fake_color = "🟢"
+        elif fake_number % 2 == 0:
+            fake_color = "🔴"
+        else:
+            fake_color = "⚫️"
+        await anim.edit_text(f"🎡 <b>{fake_color} {fake_number}</b>", parse_mode="HTML")
+        await asyncio.sleep(0.15)  # быстро
+    
+    # Постепенное замедление
+    delays = [0.2, 0.3, 0.4, 0.6, 0.8]
+    for delay in delays:
+        fake_number = random.randint(0, 36)
+        if fake_number == 0:
+            fake_color = "🟢"
+        elif fake_number % 2 == 0:
+            fake_color = "🔴"
+        else:
+            fake_color = "⚫️"
+        await anim.edit_text(f"🎡 <b>{fake_color} {fake_number}</b>", parse_mode="HTML")
+        await asyncio.sleep(delay)
+    
+    # Финальный результат
     number = random.randint(0, 36)
     color = 'зелёное' if number == 0 else ('красное' if number % 2 == 0 else 'чёрное')
-
+    if number == 0:
+        result_color = "🟢"
+    elif number % 2 == 0:
+        result_color = "🔴"
+    else:
+        result_color = "⚫️"
+    
+    # Определяем выигрыш
     if bet_type == 'number':
         win = number == bet_number
     elif bet_type == 'red':
@@ -7253,12 +7280,12 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
                 profit = amount * multiplier
                 await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
                 exp = await get_setting_int("exp_per_roulette_win")
-                phrase = f"🎡 <b>Выпало {number} {color}!</b> Ты выиграл {profit:.2f} MLB!"
+                phrase = f"🎡 <b>{result_color} {number} {color}!</b> Ты выиграл {profit:.2f} MLB!"
                 if profit >= BIG_WIN_THRESHOLD:
                     asyncio.create_task(notify_big_win(user_id, "Рулетка", amount, profit))
             else:
                 exp = await get_setting_int("exp_per_roulette_lose")
-                phrase = f"🎡 <b>Выпало {number} {color}.</b> Твоя ставка не сыграла. -{amount:.2f} MLB."
+                phrase = f"🎡 <b>{result_color} {number} {color}.</b> Твоя ставка не сыграла. -{amount:.2f} MLB."
             level_up_msg = await add_exp(user_id, exp, conn=conn)
 
     if level_up_msg:
