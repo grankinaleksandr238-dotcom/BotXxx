@@ -3794,8 +3794,6 @@ class EditGiveaway(StatesGroup):
     winners_count = State()
     media = State()
 
-class PurchaseItem(StatesGroup):
-    item_id = State()
 
 # ----- НОВЫЕ СОСТОЯНИЯ ДЛЯ ПОДПОЛЬНЫХ БОЁВ -----
 class CreateFighter(StatesGroup):
@@ -4287,6 +4285,66 @@ def repeat_bet_keyboard(game: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔁 Повторить", callback_data=f"repeat_{game}", style="primary")]
     ])
+
+def shop_items_keyboard(items: List[dict], page: int = 1, total_pages: int = 1) -> InlineKeyboardMarkup:
+    """
+    Создаёт инлайн-клавиатуру со списком товаров для пользователя.
+    items: список словарей с полями id, name, price
+    """
+    builder = InlineKeyboardBuilder()
+    
+    # Чередуем стили для красоты
+    styles = ['primary', 'success', 'secondary', 'danger']
+    for i, item in enumerate(items):
+        style = styles[i % len(styles)]
+        button_text = f"{item['name']} – {float(item['price']):.2f} MLB"
+        builder.button(
+            text=button_text,
+            callback_data=f"buy_{item['id']}",
+            style=style
+        )
+    builder.adjust(1)  # по одной кнопке в ряд
+    
+    # Кнопки пагинации (используем префикс usr_shop_page_)
+    nav_buttons = []
+    if page > 1:
+        nav_buttons.append(InlineKeyboardButton(text="⬅️", callback_data=f"usr_shop_page_{page-1}"))
+    if page < total_pages:
+        nav_buttons.append(InlineKeyboardButton(text="➡️", callback_data=f"usr_shop_page_{page+1}"))
+    if nav_buttons:
+        builder.row(*nav_buttons)
+    
+    builder.row(InlineKeyboardButton(text="❌ Закрыть", callback_data="shop_close"))
+    
+    return builder.as_markup()
+
+async def show_shop_page(message: Message, page: int, edit: bool = False):
+    """Отображает страницу магазина с инлайн-кнопками."""
+    offset = (page - 1) * ITEMS_PER_PAGE
+    async with db_pool.acquire() as conn:
+        total = await conn.fetchval("SELECT COUNT(*) FROM shop_items")
+        items = await conn.fetch(
+            "SELECT id, name, price FROM shop_items ORDER BY id LIMIT $1 OFFSET $2",
+            ITEMS_PER_PAGE, offset
+        )
+    
+    if not items:
+        text = "🎁 <b>В магазине пока нет подарков.</b>"
+        if edit:
+            await message.edit_text(text, parse_mode="HTML")
+        else:
+            await message.answer(text, parse_mode="HTML")
+        return
+    
+    total_pages = (total + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE
+    text = f"🛍 <b>Магазин подарков</b> (страница {page}/{total_pages})\n\nВыберите товар:"
+    
+    kb = shop_items_keyboard([dict(item) for item in items], page, total_pages)
+    
+    if edit:
+        await message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    else:
+        await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # ==================== КЛАВИАТУРЫ ДЛЯ ПОДТВЕРЖДЕНИЯ И Т.П. ====================
 
@@ -6139,103 +6197,80 @@ async def gifts_handler(message: Message, state: FSMContext):
         )
         return
 
-    async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT id, name, description, price, stock FROM shop_items ORDER BY id")
-    if not rows:
-        await message.answer(
-            "🎁 <b>В магазине пока нет подарков.</b>",
-            reply_markup=main_menu_keyboard(await is_admin(user_id)),
-            parse_mode="HTML"
-        )
-        return
+    page = 1
+    await show_shop_page(message, page)
 
-    text = "🎁 <b>Доступные подарки:</b>\n\n"
-    for row in rows:
-        stock_info = f" (в наличии: {row['stock']})" if row['stock'] != -1 else ""
-        text += f"🆔 {row['id']}: <b>{row['name']}</b>\n{row['description']}\n💰 {float(row['price']):.2f} MLB{stock_info}\n\n"
-    text += "📝 <b>Введи ID товара, который хочешь купить (или /cancel для отмены).</b>"
 
-    await message.answer(text, reply_markup=back_keyboard(), parse_mode="HTML")
-    await state.set_state(PurchaseItem.item_id)
+@dp.callback_query(F.data.startswith("usr_shop_page_"))
+async def user_shop_page_callback(callback: CallbackQuery):
+    """Обработчик пагинации в пользовательском магазине."""
+    page = int(callback.data.split("_")[3])
+    await show_shop_page(callback.message, page, edit=True)
+    await callback.answer()
 
-@dp.message(PurchaseItem.item_id, F.text)
-async def process_purchase_id(message: Message, state: FSMContext):
-    if message.text == "◀️ Назад":
-        await state.clear()
-        await message.answer(
-            "📋 <b>Главное меню</b>",
-            reply_markup=main_menu_keyboard(await is_admin(message.from_user.id)),
-            parse_mode="HTML"
-        )
-        return
+
+@dp.callback_query(F.data == "shop_close")
+async def shop_close_callback(callback: CallbackQuery):
+    """Закрыть магазин."""
+    await callback.message.delete()
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("buy_"))
+async def process_buy_callback(callback: CallbackQuery, state: FSMContext):
+    """Обработчик покупки товара по кнопке."""
+    item_id = int(callback.data.split("_")[1])
+    user_id = callback.from_user.id
+
     try:
-        item_id = int(message.text.strip())
-    except ValueError:
-        await message.answer("❌ <b>Введи число.</b>", parse_mode="HTML")
-        return
-    user_id = message.from_user.id
-    try:
-        logging.info(f"Покупка: пользователь {user_id}, товар ID {item_id}")
         async with db_pool.acquire() as conn:
             async with conn.transaction():
-                row = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1 FOR UPDATE", item_id)
-                if not row:
-                    await message.answer("❌ <b>Товар с таким ID не найден.</b>", parse_mode="HTML")
+                item = await conn.fetchrow("SELECT name, price, stock FROM shop_items WHERE id=$1 FOR UPDATE", item_id)
+                if not item:
+                    await callback.answer("❌ Товар не найден", show_alert=True)
                     return
-                name, price, stock = row['name'], float(row['price']), row['stock']
+
+                name, price, stock = item['name'], float(item['price']), item['stock']
+
                 if stock != -1 and stock <= 0:
-                    await message.answer("❌ <b>Товара нет в наличии!</b>", parse_mode="HTML")
+                    await callback.answer("❌ Товара нет в наличии", show_alert=True)
                     return
+
                 balance = await get_user_balance(user_id)
                 if balance < price:
-                    await message.answer(
-                        f"❌ <b>Не хватает MLB! Нужно {price:.2f}, у тебя {balance:.2f}</b>",
-                        parse_mode="HTML"
-                    )
+                    await callback.answer(f"❌ Недостаточно MLB. Нужно {price:.2f}", show_alert=True)
                     return
+
                 success, new_balance, _ = await update_user_balance(user_id, -price, conn=conn, allow_negative=False)
                 if not success:
-                    await message.answer("❌ <b>Ошибка при списании средств.</b>", parse_mode="HTML")
+                    await callback.answer("❌ Ошибка при списании", show_alert=True)
                     return
+
                 await update_user_total_spent(user_id, price, conn=conn)
+
                 await conn.execute(
                     "INSERT INTO purchases (user_id, item_id, purchase_date) VALUES ($1, $2, $3)",
                     user_id, item_id, datetime.now(timezone.utc)
                 )
+
                 if stock != -1:
                     await conn.execute("UPDATE shop_items SET stock = stock - 1 WHERE id=$1", item_id)
-        await message.answer(
+
+        await callback.message.answer(
             f"✅ <b>Ты купил {name}!</b> Ожидай подтверждения.",
-            reply_markup=main_menu_keyboard(await is_admin(user_id)),
             parse_mode="HTML"
         )
-        # Уведомление о крупной покупке
+
         if price >= BIG_PURCHASE_THRESHOLD:
             await notify_big_purchase(user_id, name, price)
-        asyncio.create_task(notify_admins_about_purchase(message.from_user, name, price))
-    except Exception as e:
-        logging.exception("Ошибка при покупке")
-        await message.answer("❌ <b>Произошла внутренняя ошибка. Попробуйте позже.</b>", parse_mode="HTML")
-    finally:
-        await state.clear()
 
-async def notify_admins_about_purchase(user: types.User, item_name: str, price: float):
-    admins = SUPER_ADMINS.copy()
-    try:
-        async with db_pool.acquire() as conn:
-            rows = await conn.fetch("SELECT user_id FROM admins")
-            admins.extend([r['user_id'] for r in rows])
+        asyncio.create_task(notify_admins_about_purchase(callback.from_user, name, price))
+
+        await callback.answer("✅ Покупка совершена!")
+
     except Exception as e:
-        logging.exception("Ошибка при получении списка админов")
-        return
-    text = (
-        f"🛍 <b>Новая покупка!</b>\n"
-        f"Пользователь: {user.first_name} (ID: {user.id})\n"
-        f"Товар: {item_name}\n"
-        f"Цена: {price:.2f} MLB"
-    )
-    for admin_id in admins:
-        await safe_send_message(admin_id, text, parse_mode="HTML")
+        logging.exception("Ошибка при покупке через callback")
+        await callback.answer("❌ Произошла ошибка", show_alert=True)
 
 # ==================== МОИ ПОКУПКИ ====================
 @dp.message(F.text == "💰 Мои покупки")
