@@ -13641,14 +13641,21 @@ async def create_vpn_client(user_id: int, days: int) -> str:
     client_name = f"user_{user_id}_{int(time.time())}"
     
     try:
-        # Подключаемся по SSH к серверу
+        async def create_vpn_client(user_id: int, days: int) -> str:
+    client_name = f"user_{user_id}_{int(time.time())}"
+    
+    try:
+        # Подключаемся по SSH к серверу с использованием ключа
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         ssh.connect(
             hostname='212.109.199.46',
             username='root',
-            password='Alexandr997'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ ОТ СЕРВЕРА !!!
+            key_filename='/root/.ssh/id_rsa',
+            timeout=10
         )
+        
+        # ... остальной код без изменений ...
         
         # Создаём клиента через easy-rsa в контейнере с указанием PKI
         cmd_create = f"docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa build-client-full {client_name} nopass\""
