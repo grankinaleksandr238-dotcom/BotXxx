@@ -6020,9 +6020,39 @@ async def upgrade_skill_confirm(message: Message, state: FSMContext):
     else:
         await message.answer("❌ <b>Введи 'да' или 'нет'.</b>", parse_mode="HTML")
 
-# ==================== МАГАЗИН ПОДАРКОВ ====================
+# ==================== НОВОЕ МЕНЮ МАГАЗИНА (С РАЗДЕЛАМИ) ====================
+
 @dp.message(F.text == "🛒 Магазин")
-async def shop_handler(message: Message, state: FSMContext):
+async def shop_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    if await is_banned(user_id) and not await is_admin(user_id):
+        return
+    await ensure_user_exists(user_id, message.from_user.username, message.from_user.first_name)
+    ok, not_subscribed = await check_subscription(user_id)
+    if not ok:
+        await message.answer(
+            "❗️ <b>Сначала подпишись на каналы.</b>",
+            reply_markup=subscription_inline(not_subscribed),
+            parse_mode="HTML"
+        )
+        return
+
+    text = "🛒 <b>Магазин</b>\n\nВыбери раздел:"
+    kb = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="🎁 Подарки")],
+            [KeyboardButton(text="🔐 VPN подписки")],
+            [KeyboardButton(text="◀️ Назад")]
+        ],
+        resize_keyboard=True
+    )
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+# ==================== МАГАЗИН ПОДАРКОВ ====================
+@dp.message(F.text == "🎁 Подарки")
+async def gifts_handler(message: Message, state: FSMContext):
     if message.chat.type != 'private':
         return
     user_id = message.from_user.id
