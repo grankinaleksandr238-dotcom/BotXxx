@@ -13668,8 +13668,8 @@ async def vpn_buy_callback(callback: CallbackQuery):
     price = prices[plan]
     days = days_map[plan]
 
-    # Проверяем, покупал ли пользователь VPN сегодня
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    # ✅ Используем naive UTC для работы с БД
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
     
     async with db_pool.acquire() as conn:
@@ -13688,7 +13688,6 @@ async def vpn_buy_callback(callback: CallbackQuery):
             await callback.answer()
             return
 
-    # Проверяем баланс
     balance = await get_user_balance(user_id)
     if balance < price:
         await callback.message.edit_text(
@@ -13700,24 +13699,20 @@ async def vpn_buy_callback(callback: CallbackQuery):
         await callback.answer()
         return
     
-    # Списываем MLB
     await update_user_balance(user_id, -price, allow_negative=False)
     
-    # Отправляем уведомление
     await callback.message.edit_text(
         "🔄 <b>Создаём твой VPN-ключ...</b>\n"
         "Это займёт несколько секунд.",
         parse_mode="HTML"
     )
     
-    # Создаём клиента
     result = await create_vpn_client(user_id, days)
     
     if result:
         config = result['config']
         client_name = result['client_name']
         
-        # ✅ Безопасно: отправляем как файл
         await callback.message.delete()
         await callback.message.answer_document(
             BufferedInputFile(config.encode(), filename=f"vpn_{user_id}_{int(time.time())}.ovpn"),
@@ -13731,17 +13726,14 @@ async def vpn_buy_callback(callback: CallbackQuery):
             parse_mode="HTML"
         )
         
-        # Записываем в БД с client_name
         async with db_pool.acquire() as conn:
-            expires = datetime.now(timezone.utc) + timedelta(days=days)
+            expires = datetime.utcnow() + timedelta(days=days)  # ✅ naive UTC
             await conn.execute("""
                 INSERT INTO vpn_purchases (user_id, days, price, expires_at, client_name)
                 VALUES ($1, $2, $3, $4, $5)
             """, user_id, days, price, expires, client_name)
     else:
-        # Ошибка — возвращаем деньги
         await update_user_balance(user_id, price, allow_negative=False)
-        # ✅ Текст ошибки не содержит конфиг, поэтому безопасно
         await callback.message.edit_text(
             "❌ <b>Ошибка при создании VPN.</b>\n"
             "Деньги возвращены. Попробуй позже или свяжись с админом.",
@@ -13749,6 +13741,7 @@ async def vpn_buy_callback(callback: CallbackQuery):
         )
     
     await callback.answer()
+
 
 
 @dp.callback_query(F.data == "vpn_back")
