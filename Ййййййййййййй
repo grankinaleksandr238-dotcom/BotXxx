@@ -1738,7 +1738,21 @@ async def init_db():
                 payout NUMERIC(12,2)
             )
         ''')
-
+                # Таблица vpn_purchases
+        await conn.execute('''
+            CREATE TABLE IF NOT EXISTS vpn_purchases (
+                id SERIAL PRIMARY KEY,
+                user_id BIGINT NOT NULL,
+                days INTEGER NOT NULL,
+                price INTEGER NOT NULL,
+                purchased_at TIMESTAMP DEFAULT NOW(),
+                expires_at TIMESTAMP NOT NULL,
+                client_name TEXT,
+                status TEXT DEFAULT 'active'
+            )
+        ''')
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_vpn_purchases_user ON vpn_purchases(user_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_vpn_purchases_expires ON vpn_purchases(expires_at)")
         # Индексы для новых таблиц
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fights_status ON fights(status)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_fights_start_time ON fights(start_time)")
