@@ -4293,15 +4293,12 @@ def shop_items_keyboard(items: List[dict], page: int = 1, total_pages: int = 1) 
     """
     builder = InlineKeyboardBuilder()
     
-    # Чередуем стили для красоты
-    styles = ['primary', 'success', 'secondary', 'danger']
+    # Просто добавляем кнопки без стилей
     for i, item in enumerate(items):
-        style = styles[i % len(styles)]
         button_text = f"{item['name']} – {float(item['price']):.2f} MLB"
         builder.button(
             text=button_text,
-            callback_data=f"buy_{item['id']}",
-            style=style
+            callback_data=f"buy_{item['id']}"
         )
     builder.adjust(1)  # по одной кнопке в ряд
     
