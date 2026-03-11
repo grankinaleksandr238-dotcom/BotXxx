@@ -13634,14 +13634,6 @@ import time
 import os
 
 async def create_vpn_client(user_id: int, days: int) -> str:
-    """
-    Создаёт VPN-клиента в Docker-контейнере OpenVPN.
-    days: срок в днях (1, 7, 30) - пока не используется
-    """
-    client_name = f"user_{user_id}_{int(time.time())}"
-    
-    try:
-        async def create_vpn_client(user_id: int, days: int) -> str:
     client_name = f"user_{user_id}_{int(time.time())}"
     
     try:
@@ -13654,8 +13646,6 @@ async def create_vpn_client(user_id: int, days: int) -> str:
             key_filename='/root/.ssh/id_rsa',
             timeout=10
         )
-        
-        # ... остальной код без изменений ...
         
         # Создаём клиента через easy-rsa в контейнере с указанием PKI
         cmd_create = f"docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa build-client-full {client_name} nopass\""
@@ -13726,8 +13716,7 @@ key-direction 1
     except Exception as e:
         logging.error(f"VPN creation error for user {user_id}: {e}")
         return None
-
-
+                
 @dp.callback_query(F.data.startswith("vpn_"))
 async def vpn_buy_callback(callback: CallbackQuery):
     user_id = callback.from_user.id
