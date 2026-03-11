@@ -7013,35 +7013,97 @@ async def slots_bet(message: Message, state: FSMContext):
         await casino_menu(message)
         return
 
-    anim = await message.answer("🍒 <b>Запускаем слоты...</b>", parse_mode="HTML")
-    stages = [
-        "🍒 | 🍋 | 🍊",
-        "🍋 | 🍊 | 7️⃣",
-        "🍊 | 7️⃣ | 💎",
-        "7️⃣ | 💎 | 🍒",
-    ]
-    for stage in stages:
-        await asyncio.sleep(0.3)
-        await anim.edit_text(stage, parse_mode="HTML")
+    # Набор эмодзи для слотов
+    slot_symbols = ["🍒", "🍋", "🍊", "🍇", "🍉", "7️⃣", "💎", "🎰", "🔔", "🍀"]
+    rows = 3
+    cols = 5
 
+    # Определяем, будет ли выигрыш согласно настройкам
     win_prob = await get_setting_float("slots_win_probability")
-    win = random.random() * 100 <= win_prob
-    symbols = ['🍒', '🍋', '🍊', '7️⃣', '💎']
-    result = [random.choice(symbols) for _ in range(3)]
-    if win and random.random() < 0.1:
-        result = [random.choice(symbols) for _ in range(3)]
-        result[0] = result[1] = result[2] = random.choice(symbols)
-    result_str = " | ".join(result)
+    should_win = random.random() * 100 <= win_prob
 
-    if win and result[0] == result[1] == result[2]:
-        if result[0] == '7️⃣':
+    # Генерация финальной матрицы
+    final_matrix = [[random.choice(slot_symbols) for _ in range(cols)] for _ in range(rows)]
+
+    # Проверка выигрыша по горизонтальным линиям
+    def check_win(matrix):
+        for r in range(rows):
+            if len(set(matrix[r])) == 1:  # все символы в строке одинаковы
+                return True, r
+        return False, None
+
+    win, win_row = check_win(final_matrix)
+
+    # Если нужно выиграть, но выигрыша нет – заменяем одну строку на одинаковые символы
+    if should_win and not win:
+        # Выбираем случайный символ и случайную строку
+        symbol = random.choice(slot_symbols)
+        win_row = random.randint(0, rows-1)
+        final_matrix[win_row] = [symbol] * cols
+        win = True
+    # Если не нужно выиграть, но выигрыш есть – изменяем одну строку, чтобы не было выигрыша
+    elif not should_win and win:
+        # Меняем последний символ в выигрышной строке на другой
+        other_symbols = [s for s in slot_symbols if s != final_matrix[win_row][0]]
+        final_matrix[win_row][-1] = random.choice(other_symbols)
+        win = False
+
+    # Анимация
+    anim = await message.answer("🎰 <b>Слоты запущены...</b>", parse_mode="HTML")
+    await asyncio.sleep(0.5)
+
+    total_steps = 30
+    # Генерируем случайные матрицы для каждого шага
+    for step in range(total_steps):
+        # Случайная матрица для анимации
+        random_matrix = [[random.choice(slot_symbols) for _ in range(cols)] for _ in range(rows)]
+        # Формируем строки для отображения
+        lines = []
+        for r in range(rows):
+            lines.append(" ".join(random_matrix[r]))
+        matrix_text = "\n".join(lines)
+        # Длина линии для рамки (с пробелами)
+        line_length = len(" ".join(random_matrix[0]))
+        top_line = "═" * line_length
+        bottom_line = top_line
+        text = (
+            f"🎰 <b>СЛОТЫ</b> 🎰\n"
+            f"<code>{top_line}</code>\n"
+            f"<code>{matrix_text}</code>\n"
+            f"<code>{bottom_line}</code>"
+        )
+        await anim.edit_text(text, parse_mode="HTML")
+        delay = 0.02 + step * 0.015
+        await asyncio.sleep(delay)
+
+    # Финальная матрица
+    final_lines = []
+    for r in range(rows):
+        final_lines.append(" ".join(final_matrix[r]))
+    final_matrix_text = "\n".join(final_lines)
+    line_length = len(" ".join(final_matrix[0]))
+    top_line = "═" * line_length
+    bottom_line = top_line
+    final_text = (
+        f"🎰 <b>СЛОТЫ</b> 🎰\n"
+        f"<code>{top_line}</code>\n"
+        f"<code>{final_matrix_text}</code>\n"
+        f"<code>{bottom_line}</code>"
+    )
+
+    # Расчёт выигрыша
+    multiplier = 0
+    if win:
+        # Определяем множитель в зависимости от символа в выигрышной строке
+        symbol = final_matrix[win_row][0]
+        if symbol == "7️⃣":
             multiplier = await get_setting_float("slots_multiplier_seven")
-        elif result[0] == '💎':
+        elif symbol == "💎":
             multiplier = await get_setting_float("slots_multiplier_diamond")
-        else:
+        elif symbol in ["🍒", "🍋", "🍊", "🍇", "🍉", "🎰", "🔔", "🍀"]:
             multiplier = await get_setting_float("slots_multiplier_three")
-    elif win:
-        multiplier = 2.0
+        else:
+            multiplier = 2.0
     else:
         multiplier = 0
 
@@ -7057,12 +7119,12 @@ async def slots_bet(message: Message, state: FSMContext):
                 profit = amount * multiplier
                 await update_user_balance(user_id, profit, conn=conn, allow_negative=False)
                 exp = await get_setting_int("exp_per_slots_win")
-                phrase = f"🍒 <b>{result_str}</b> — Ура! Выигрыш x{multiplier:.1f}! +{profit:.2f} MLB!"
+                phrase = f"🎰 <b>Поздравляем!</b> Выпала линия из {symbol}! Выигрыш x{multiplier:.1f}: +{profit:.2f} MLB!"
                 if profit >= BIG_WIN_THRESHOLD:
                     asyncio.create_task(notify_big_win(user_id, "Слоты", amount, profit))
             else:
                 exp = await get_setting_int("exp_per_slots_lose")
-                phrase = f"🍒 <b>{result_str}</b> — Не повезло. -{amount:.2f} MLB."
+                phrase = f"🎰 <b>Не повезло.</b> -{amount:.2f} MLB."
             level_up_msg = await add_exp(user_id, exp, conn=conn)
 
     if level_up_msg:
@@ -7074,8 +7136,14 @@ async def slots_bet(message: Message, state: FSMContext):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔁 Повторить", callback_data="repeat_slots", style="primary")]
     ])
+
+    # Показываем финальный кадр
+    await anim.edit_text(final_text, parse_mode="HTML")
+    await asyncio.sleep(1)
+    # Затем результат
     await anim.edit_text(phrase, reply_markup=kb, parse_mode="HTML")
     await state.clear()
+        
 
 # ==================== РУЛЕТКА ====================
 @dp.message(F.text == "🎡 Рулетка")
