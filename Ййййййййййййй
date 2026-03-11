@@ -13627,10 +13627,12 @@ async def clear_logs_cancel(callback: CallbackQuery):
 
 # ==================== КОНЕЦ ЧАСТИ 12 ====================
 # ==================== VPN ФУНКЦИИ ====================
+# ==================== VPN ФУНКЦИИ ====================
 
 import paramiko
 import time
 import os
+import html  # добавлено для экранирования, если понадобится
 
 async def create_vpn_client(user_id: int, days: int) -> dict:
     """
@@ -13740,7 +13742,6 @@ async def vpn_buy_callback(callback: CallbackQuery):
         "7days": price_7days,
         "30days": price_30days
     }
-    
     days_map = {
         "1day": 1,
         "7days": 7,
@@ -13803,7 +13804,7 @@ async def vpn_buy_callback(callback: CallbackQuery):
         config = result['config']
         client_name = result['client_name']
         
-                # Отправляем конфиг как файл .ovpn
+        # ✅ Безопасно: отправляем как файл
         await callback.message.delete()
         await callback.message.answer_document(
             BufferedInputFile(config.encode(), filename=f"vpn_{user_id}_{int(time.time())}.ovpn"),
@@ -13827,6 +13828,7 @@ async def vpn_buy_callback(callback: CallbackQuery):
     else:
         # Ошибка — возвращаем деньги
         await update_user_balance(user_id, price, allow_negative=False)
+        # ✅ Текст ошибки не содержит конфиг, поэтому безопасно
         await callback.message.edit_text(
             "❌ <b>Ошибка при создании VPN.</b>\n"
             "Деньги возвращены. Попробуй позже или свяжись с админом.",
@@ -13901,11 +13903,6 @@ async def vpn_expiration_checker():
 
 # ==================== КОНЕЦ ====================
 
- 
-
-
-# ==================== КОНЕЦ ====================
-
 if __name__ == '__main__':
     try:
         asyncio.run(main())
@@ -13913,6 +13910,9 @@ if __name__ == '__main__':
         logging.info("Бот остановлен пользователем")
     except Exception as e:
         logging.critical(f"Необработанная ошибка: {e}", exc_info=True)
+
+ 
+
 
 
 # ==================== КОНЕЦ ЧАСТИ 11 ====================
