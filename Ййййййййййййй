@@ -13635,8 +13635,8 @@ import os
 
 async def create_vpn_client(user_id: int, days: int) -> str:
     """
-    Создаёт VPN-клиента через SSH и возвращает конфиг для OpenVPN.
-    days: срок в днях (1, 7, 30)
+    Создаёт VPN-клиента в Docker-контейнере OpenVPN.
+    days: срок в днях (1, 7, 30) - пока не используется, позже добавим expiry
     """
     client_name = f"user_{user_id}_{int(time.time())}"
     
@@ -13650,30 +13650,82 @@ async def create_vpn_client(user_id: int, days: int) -> str:
             password='твой_пароль'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ !!!
         )
         
-        # Создаём клиента через easy-rsa
-        commands = [
-            f"cd /etc/openvpn/easy-rsa && ./easyrsa build-client-full {client_name} nopass",
-            f"cd /etc/openvpn/client && cp /etc/openvpn/client-template.txt {client_name}.ovpn",
-            f"echo '<ca>' >> /etc/openvpn/client/{client_name}.ovpn",
-            f"cat /etc/openvpn/ca.crt >> /etc/openvpn/client/{client_name}.ovpn",
-            f"echo '</ca>' >> /etc/openvpn/client/{client_name}.ovpn",
-            f"echo '<cert>' >> /etc/openvpn/client/{client_name}.ovpn",
-            f"cat /etc/openvpn/easy-rsa/pki/issued/{client_name}.crt >> /etc/openvpn/client/{client_name}.ovpn",
-            f"echo '</cert>' >> /etc/openvpn/client/{client_name}.ovpn",
-            f"echo '<key>' >> /etc/openvpn/client/{client_name}.ovpn",
-            f"cat /etc/openvpn/easy-rsa/pki/private/{client_name}.key >> /etc/openvpn/client/{client_name}.ovpn",
-            f"echo '</key>' >> /etc/openvpn/client/{client_name}.ovpn",
-        ]
+        # Создаём клиента через easy-rsa в контейнере
+        cmd_create = f"docker exec amnezia-openvpn /usr/share/easy-rsa/easyrsa build-client-full {client_name} nopass"
+        stdin, stdout, stderr = ssh.exec_command(cmd_create)
+        # Ждём завершения (easy-rsa может работать несколько секунд)
+        exit_status = stdout.channel.recv_exit_status()
         
-        for cmd in commands:
-            ssh.exec_command(cmd)
-            time.sleep(0.5)
+        if exit_status != 0:
+            error = stderr.read().decode()
+            logging.error(f"EasyRSA error: {error}")
+            return None
         
-        # Получаем готовый конфиг
-        stdin, stdout, stderr = ssh.exec_command(f"cat /etc/openvpn/client/{client_name}.ovpn")
-        config = stdout.read().decode().strip()
+        # Получаем сертификат и ключ клиента
+        cmd_get_cert = f"docker exec amnezia-openvpn cat /opt/amnezia/openvpn/pki/issued/{client_name}.crt"
+        stdin, stdout, stderr = ssh.exec_command(cmd_get_cert)
+        client_crt = stdout.read().decode()
+        
+        cmd_get_key = f"docker exec amnezia-openvpn cat /opt/amnezia/openvpn/pki/private/{client_name}.key"
+        stdin, stdout, stderr = ssh.exec_command(cmd_get_key)
+        client_key = stdout.read().decode()
+        
+        # Получаем CA сертификат
+        cmd_get_ca = "docker exec amnezia-openvpn cat /opt/amnezia/openvpn/ca.crt"
+        stdin, stdout, stderr = ssh.exec_command(cmd_get_ca)
+        ca_crt = stdout.read().decode()
+        
+        # Получаем TLS ключ
+        cmd_get_ta = "docker exec amnezia-openvpn cat /opt/amnezia/openvpn/ta.key"
+        stdin, stdout, stderr = ssh.exec_command(cmd_get_ta)
+        ta_key = stdout.read().decode()
+        
+        # Получаем конфиг сервера (чтобы взять параметры)
+        cmd_get_config = "docker exec amnezia-openvpn cat /opt/amnezia/openvpn/server.conf"
+        stdin, stdout, stderr = ssh.exec_command(cmd_get_config)
+        server_conf = stdout.read().decode()
+        
+        # Извлекаем порт из server.conf
+        port = "1194"
+        for line in server_conf.split('\n'):
+            if line.startswith('port '):
+                port = line.split()[1]
+                break
         
         ssh.close()
+        
+        # Собираем OVPN конфиг
+        config = f"""client
+dev tun
+proto udp
+remote 212.109.199.46 {port}
+resolv-retry infinite
+nobind
+persist-key
+persist-tun
+remote-cert-tls server
+verb 3
+auth SHA512
+cipher AES-256-GCM
+key-direction 1
+
+<ca>
+{ca_crt}
+</ca>
+
+<cert>
+{client_crt}
+</cert>
+
+<key>
+{client_key}
+</key>
+
+<tls-auth>
+{ta_key}
+</tls-auth>
+"""
+        
         return config
         
     except Exception as e:
