@@ -13636,7 +13636,7 @@ import os
 async def create_vpn_client(user_id: int, days: int) -> str:
     """
     Создаёт VPN-клиента в Docker-контейнере OpenVPN.
-    days: срок в днях (1, 7, 30) - пока не используется, позже добавим expiry
+    days: срок в днях (1, 7, 30) - пока не используется
     """
     client_name = f"user_{user_id}_{int(time.time())}"
     
@@ -13647,13 +13647,12 @@ async def create_vpn_client(user_id: int, days: int) -> str:
         ssh.connect(
             hostname='212.109.199.46',
             username='root',
-            password='твой_пароль'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ !!!
+            password='твой_пароль'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ ОТ СЕРВЕРА !!!
         )
         
-        # Создаём клиента через easy-rsa в контейнере
-        cmd_create = f"docker exec amnezia-openvpn /usr/share/easy-rsa/easyrsa build-client-full {client_name} nopass"
+        # Создаём клиента через easy-rsa в контейнере с указанием PKI
+        cmd_create = f"docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa build-client-full {client_name} nopass\""
         stdin, stdout, stderr = ssh.exec_command(cmd_create)
-        # Ждём завершения (easy-rsa может работать несколько секунд)
         exit_status = stdout.channel.recv_exit_status()
         
         if exit_status != 0:
@@ -13661,11 +13660,12 @@ async def create_vpn_client(user_id: int, days: int) -> str:
             logging.error(f"EasyRSA error: {error}")
             return None
         
-        # Получаем сертификат и ключ клиента
+        # Получаем сертификат клиента
         cmd_get_cert = f"docker exec amnezia-openvpn cat /opt/amnezia/openvpn/pki/issued/{client_name}.crt"
         stdin, stdout, stderr = ssh.exec_command(cmd_get_cert)
         client_crt = stdout.read().decode()
         
+        # Получаем ключ клиента
         cmd_get_key = f"docker exec amnezia-openvpn cat /opt/amnezia/openvpn/pki/private/{client_name}.key"
         stdin, stdout, stderr = ssh.exec_command(cmd_get_key)
         client_key = stdout.read().decode()
@@ -13680,25 +13680,13 @@ async def create_vpn_client(user_id: int, days: int) -> str:
         stdin, stdout, stderr = ssh.exec_command(cmd_get_ta)
         ta_key = stdout.read().decode()
         
-        # Получаем конфиг сервера (чтобы взять параметры)
-        cmd_get_config = "docker exec amnezia-openvpn cat /opt/amnezia/openvpn/server.conf"
-        stdin, stdout, stderr = ssh.exec_command(cmd_get_config)
-        server_conf = stdout.read().decode()
-        
-        # Извлекаем порт из server.conf
-        port = "1194"
-        for line in server_conf.split('\n'):
-            if line.startswith('port '):
-                port = line.split()[1]
-                break
-        
         ssh.close()
         
         # Собираем OVPN конфиг
         config = f"""client
 dev tun
 proto udp
-remote 212.109.199.46 {port}
+remote 212.109.199.46 39743
 resolv-retry infinite
 nobind
 persist-key
@@ -13731,6 +13719,7 @@ key-direction 1
     except Exception as e:
         logging.error(f"VPN creation error for user {user_id}: {e}")
         return None
+
 
 @dp.callback_query(F.data.startswith("vpn_"))
 async def vpn_buy_callback(callback: CallbackQuery):
