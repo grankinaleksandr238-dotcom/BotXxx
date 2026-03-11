@@ -13,6 +13,7 @@ import sys
 import traceback
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Tuple, Any, Union
+from aiogram.types import BufferedInputFile
 from collections import defaultdict
 from functools import lru_cache, wraps
 from cachetools import TTLCache
@@ -13782,18 +13783,17 @@ async def vpn_buy_callback(callback: CallbackQuery):
         config = result['config']
         client_name = result['client_name']
         
-        # Отправляем конфиг
-        await callback.message.edit_text(
-            f"✅ <b>VPN активирован!</b>\n\n"
-            f"📅 Срок: {days} дней\n"
-            f"💰 Списано: {price} MLB\n\n"
-            f"<b>Твой ключ доступа (скопируй и вставь в приложение AmneziaVPN):</b>\n\n"
-            f"<code>{config}</code>\n\n"
-            f"📲 Инструкция:\n"
-            f"1. Скачай AmneziaVPN\n"
-            f"2. Нажми «У меня есть ключ»\n"
-            f"3. Вставь этот текст\n"
-            f"4. Подключись",
+                # Отправляем конфиг как файл .ovpn
+        await callback.message.delete()
+        await callback.message.answer_document(
+            BufferedInputFile(config.encode(), filename=f"vpn_{user_id}_{int(time.time())}.ovpn"),
+            caption=f"✅ <b>VPN активирован!</b>\n\n"
+                    f"📅 Срок: {days} дней\n"
+                    f"💰 Списано: {price} MLB\n\n"
+                    f"📲 <b>Инструкция:</b>\n"
+                    f"1. Скачай приложение AmneziaVPN\n"
+                    f"2. Открой полученный файл\n"
+                    f"3. Нажми «Подключиться»",
             parse_mode="HTML"
         )
         
