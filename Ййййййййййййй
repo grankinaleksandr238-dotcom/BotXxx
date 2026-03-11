@@ -13237,6 +13237,7 @@ async def on_startup():
     asyncio.create_task(update_chat_stats())
     asyncio.create_task(periodic_cleanup())
     asyncio.create_task(business_expiration_checker())
+    asyncio.create_task(vpn_expiration_checker())
     asyncio.create_task(fight_scheduler())
     logging.info("✅ Бот запущен!")
 
@@ -13801,6 +13802,62 @@ async def vpn_buy_callback(callback: CallbackQuery):
     await callback.answer()
 
 # ==================== КОНЕЦ ====================
+# ==================== КОНЕЦ ЧАСТИ 12 ====================
+
+
+
+# 👇 СЮДА ВСТАВЛЯЕМ НОВУЮ ФУНКЦИЮ
+async def vpn_expiration_checker():
+    """Раз в час проверяет истекшие VPN-подписки и удаляет клиентов."""
+    while True:
+        try:
+            await asyncio.sleep(3600)
+            now = datetime.now(timezone.utc)
+            
+            async with db_pool.acquire() as conn:
+                expired = await conn.fetch("""
+                    SELECT user_id, client_name FROM vpn_purchases 
+                    WHERE expires_at <= $1 AND status = 'active'
+                """, now)
+                
+                for row in expired:
+                    user_id = row['user_id']
+                    client_name = row['client_name']
+                    
+                    ssh = paramiko.SSHClient()
+                    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                    ssh.connect(
+                        hostname='212.109.199.46',
+                        username='root',
+                        key_filename='/root/.ssh/id_rsa',
+                        timeout=10
+                    )
+                    
+                    cmd_revoke = f"docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa revoke {client_name}\""
+                    ssh.exec_command(cmd_revoke)
+                    
+                    cmd_crl = "docker exec amnezia-openvpn sh -c \"EASYRSA_PKI=/opt/amnezia/openvpn/pki /usr/share/easy-rsa/easyrsa gen-crl\""
+                    ssh.exec_command(cmd_crl)
+                    
+                    ssh.close()
+                    
+                    await conn.execute("""
+                        UPDATE vpn_purchases SET status = 'expired' 
+                        WHERE user_id = $1 AND client_name = $2
+                    """, user_id, client_name)
+                    
+                    await safe_send_message(
+                        user_id,
+                        "⏰ <b>Срок действия твоей VPN-подписки истёк.</b>\n"
+                        "Чтобы продолжить пользоваться, купи новую в магазине.",
+                        parse_mode="HTML"
+                    )
+                    
+            await asyncio.sleep(60)
+        except Exception as e:
+            logging.error(f"VPN expiration checker error: {e}")
+            await asyncio.sleep(60)
+
 
 # ==================== КОНЕЦ ====================
 
