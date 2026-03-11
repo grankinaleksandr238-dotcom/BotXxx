@@ -7263,6 +7263,10 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     # Ширина одного блока с пробелом: эмодзи(2) + две цифры(2) + пробел(1) = 5 символов
     block_width_with_space = 5
 
+    # Верхняя линия (без боков)
+    top_line = "═" * ((display_count * block_width_with_space) - 1)  # на 1 меньше, т.к. последний пробел не нужен
+    bottom_line = top_line
+
     anim = await message.answer("🎡 <b>Крутим рулетку...</b>", parse_mode="HTML")
     await asyncio.sleep(0.5)
 
@@ -7271,11 +7275,15 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
         visible = sequence[:display_count]
         line = " ".join(visible)     # вставляем пробелы между блоками
         # Рассчитываем отступ для стрелки над центральным блоком
-        pointer = " " * (center_index * block_width_with_space) + "▼"
-        # Рамка из псевдографики
-        top_border = "╔" + "═" * (len(line) + 2) + "╗"
-        bottom_border = "╚" + "═" * (len(line) + 2) + "╝"
-        text = f"<code>{top_border}</code>\n<code>║ {line} ║</code>\n<code>║ {pointer} ║</code>\n<code>{bottom_border}</code>"
+        pointer = " " * (center_index * block_width_with_space) + "▲"
+        # Формируем сообщение: заголовок, стрелка, числа, линии
+        text = (
+            f"🎡 <b>РУЛЕТКА</b> 🎡\n"
+            f"<code>{top_line}</code>\n"
+            f"<code>{pointer}</code>\n"
+            f"<code>{line}</code>\n"
+            f"<code>{bottom_line}</code>"
+        )
         await anim.edit_text(text, parse_mode="HTML")
         delay = 0.02 + step * 0.015   # замедление
         await asyncio.sleep(delay)
@@ -7304,10 +7312,14 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     # Финальный кадр с правильным числом под стрелкой
     visible = sequence[:display_count]
     line = " ".join(visible)
-    pointer = " " * (center_index * block_width_with_space) + "▼"
-    top_border = "╔" + "═" * (len(line) + 2) + "╗"
-    bottom_border = "╚" + "═" * (len(line) + 2) + "╝"
-    final_text = f"<code>{top_border}</code>\n<code>║ {line} ║</code>\n<code>║ {pointer} ║</code>\n<code>{bottom_border}</code>"
+    pointer = " " * (center_index * block_width_with_space) + "▲"
+    final_text = (
+        f"🎡 <b>РУЛЕТКА</b> 🎡\n"
+        f"<code>{top_line}</code>\n"
+        f"<code>{pointer}</code>\n"
+        f"<code>{line}</code>\n"
+        f"<code>{bottom_line}</code>"
+    )
 
     # Определяем цвет и текст для результата
     if final_number == 0:
@@ -7370,7 +7382,7 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
         [InlineKeyboardButton(text="🔁 Повторить", callback_data="repeat_roulette", style="primary")]
     ])
 
-    # Показываем финальный кадр с рамкой и стрелкой
+    # Показываем финальный кадр с числами и стрелкой
     await anim.edit_text(final_text, parse_mode="HTML")
     await asyncio.sleep(1)
     # Затем результат
