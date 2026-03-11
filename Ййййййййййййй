@@ -13616,7 +13616,7 @@ async def create_vpn_client(user_id: int, days: int) -> dict:
         config = f"""client
 dev tun
 proto udp
-remote 212.109.199.46 39743
+remote 212.109.199.46 31647
 resolv-retry infinite
 nobind
 persist-key
