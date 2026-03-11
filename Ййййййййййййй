@@ -13454,6 +13454,7 @@ async def clear_logs_cancel(callback: CallbackQuery):
 # ==================== КОНЕЦ ЧАСТИ 12 ====================
 
 # ==================== VPN ФУНКЦИИ ====================
+# ==================== VPN ФУНКЦИИ ====================
 
 import paramiko
 import time
@@ -13520,6 +13521,91 @@ PersistentKeepalive = 25
     except Exception as e:
         logging.error(f"VPN creation error for user {user_id}: {e}")
         return None
+
+@dp.callback_query(F.data.startswith("vpn_"))
+async def vpn_buy_callback(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    plan = callback.data.split("_")[1]
+    
+    prices = {
+        "1day": 100,
+        "7days": 500,
+        "30days": 1500
+    }
+    
+    days_map = {
+        "1day": 1,
+        "7days": 7,
+        "30days": 30
+    }
+    
+    if plan not in prices:
+        await callback.answer("❌ Неверный тариф")
+        return
+        
+    price = prices[plan]
+    days = days_map[plan]
+    
+    # Проверяем баланс
+    balance = await get_user_balance(user_id)
+    if balance < price:
+        await callback.message.edit_text(
+            f"❌ <b>Недостаточно MLB!</b>\n\n"
+            f"Нужно: {price} MLB\n"
+            f"У тебя: {balance:.2f} MLB",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+    
+    # Списываем MLB
+    await update_user_balance(user_id, -price, allow_negative=False)
+    
+    # Отправляем уведомление
+    await callback.message.edit_text(
+        "🔄 <b>Создаём твой VPN-ключ...</b>\n"
+        "Это займёт несколько секунд.",
+        parse_mode="HTML"
+    )
+    
+    # Создаём клиента
+    config = await create_vpn_client(user_id, days)
+    
+    if config:
+        # Отправляем конфиг
+        await callback.message.edit_text(
+            f"✅ <b>VPN активирован!</b>\n\n"
+            f"📅 Срок: {days} дней\n"
+            f"💰 Списано: {price} MLB\n\n"
+            f"<b>Твой ключ доступа (скопируй и вставь в приложение AmneziaVPN):</b>\n\n"
+            f"<code>{config}</code>\n\n"
+            f"📲 Инструкция:\n"
+            f"1. Скачай AmneziaVPN\n"
+            f"2. Нажми «У меня есть ключ»\n"
+            f"3. Вставь этот текст\n"
+            f"4. Подключись",
+            parse_mode="HTML"
+        )
+        
+        # Записываем в БД
+        async with db_pool.acquire() as conn:
+            expires = datetime.now(timezone.utc) + timedelta(days=days)
+            await conn.execute("""
+                INSERT INTO vpn_purchases (user_id, days, price, expires_at)
+                VALUES ($1, $2, $3, $4)
+            """, user_id, days, price, expires)
+    else:
+        # Ошибка — возвращаем деньги
+        await update_user_balance(user_id, price, allow_negative=False)
+        await callback.message.edit_text(
+            "❌ <b>Ошибка при создании VPN.</b>\n"
+            "Деньги возвращены. Попробуй позже или свяжись с админом.",
+            parse_mode="HTML"
+        )
+    
+    await callback.answer()
+
+# ==================== КОНЕЦ ====================
 
 # ==================== КОНЕЦ ====================
 
