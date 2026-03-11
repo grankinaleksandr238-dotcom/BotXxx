@@ -13753,7 +13753,27 @@ async def vpn_buy_callback(callback: CallbackQuery):
         
     price = prices[plan]
     days = days_map[plan]
+
+    # Проверяем, покупал ли пользователь VPN сегодня
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    today_end = today_start + timedelta(days=1)
     
+    async with db_pool.acquire() as conn:
+        today_purchases = await conn.fetchval("""
+            SELECT COUNT(*) FROM vpn_purchases 
+            WHERE user_id = $1 
+            AND purchased_at BETWEEN $2 AND $3
+        """, user_id, today_start, today_end)
+        
+        if today_purchases > 0:
+            await callback.message.edit_text(
+                "❌ <b>Ограничение!</b>\n\n"
+                "Ты уже покупал VPN сегодня. Следующая покупка доступна через 24 часа.",
+                parse_mode="HTML"
+            )
+            await callback.answer()
+            return
+
     # Проверяем баланс
     balance = await get_user_balance(user_id)
     if balance < price:
