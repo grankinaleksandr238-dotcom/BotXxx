@@ -13647,7 +13647,7 @@ async def create_vpn_client(user_id: int, days: int) -> str:
         ssh.connect(
             hostname='212.109.199.46',
             username='root',
-            password='твой_пароль'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ ОТ СЕРВЕРА !!!
+            password='Alexandr997'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ ОТ СЕРВЕРА !!!
         )
         
         # Создаём клиента через easy-rsa в контейнере с указанием PKI
