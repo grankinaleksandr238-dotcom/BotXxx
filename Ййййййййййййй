@@ -6050,6 +6050,127 @@ async def shop_menu(message: Message):
     )
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
+# ==================== VPN МЕНЮ (ТАРИФЫ) ====================
+
+@dp.message(F.text == "🔐 VPN подписки")
+async def vpn_shop_menu(message: Message):
+    if message.chat.type != 'private':
+        return
+    user_id = message.from_user.id
+    balance = await get_user_balance(user_id)
+    
+    text = (
+        f"🔐 <b>Приватный VPN</b>\n\n"
+        f"💰 Твой баланс: {balance:.2f} MLB\n\n"
+        f"<b>Тарифы:</b>\n"
+        f"• 🕐 1 день — 100 MLB\n"
+        f"• 🕒 1 неделя — 500 MLB\n"
+        f"• 📅 1 месяц — 1500 MLB\n\n"
+        f"После покупки ты получишь ключ для приложения AmneziaVPN."
+    )
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🕐 1 день (100 MLB)", callback_data="vpn_1day")],
+        [InlineKeyboardButton(text="🕒 1 неделя (500 MLB)", callback_data="vpn_7days")],
+        [InlineKeyboardButton(text="📅 1 месяц (1500 MLB)", callback_data="vpn_30days")],
+        [InlineKeyboardButton(text="◀️ Назад в магазин", callback_data="vpn_back")]
+    ])
+    
+    await message.answer(text, reply_markup=kb, parse_mode="HTML")
+
+
+# 👇 ОБРАБОТЧИК НАЖАТИЯ НА ТАРИФЫ
+
+@dp.callback_query(F.data.startswith("vpn_"))
+async def vpn_buy_callback(callback: CallbackQuery):
+    user_id = callback.from_user.id
+    plan = callback.data.split("_")[1]
+    
+    prices = {
+        "1day": 100,
+        "7days": 500,
+        "30days": 1500
+    }
+    
+    days_map = {
+        "1day": 1,
+        "7days": 7,
+        "30days": 30
+    }
+    
+    if plan not in prices:
+        await callback.answer("❌ Неверный тариф")
+        return
+        
+    price = prices[plan]
+    days = days_map[plan]
+    
+    # Проверяем баланс
+    balance = await get_user_balance(user_id)
+    if balance < price:
+        await callback.message.edit_text(
+            f"❌ <b>Недостаточно MLB!</b>\n\n"
+            f"Нужно: {price} MLB\n"
+            f"У тебя: {balance:.2f} MLB",
+            parse_mode="HTML"
+        )
+        await callback.answer()
+        return
+    
+    # Списываем MLB
+    await update_user_balance(user_id, -price, allow_negative=False)
+    
+    # Отправляем уведомление
+    await callback.message.edit_text(
+        "🔄 <b>Создаём твой VPN-ключ...</b>\n"
+        "Это займёт несколько секунд.",
+        parse_mode="HTML"
+    )
+    
+    # Создаём клиента
+    config = await create_vpn_client(user_id, days)
+    
+    if config:
+        # Отправляем конфиг
+        await callback.message.edit_text(
+            f"✅ <b>VPN активирован!</b>\n\n"
+            f"📅 Срок: {days} дней\n"
+            f"💰 Списано: {price} MLB\n\n"
+            f"<b>Твой ключ доступа (скопируй и вставь в приложение AmneziaVPN):</b>\n\n"
+            f"<code>{config}</code>\n\n"
+            f"📲 Инструкция:\n"
+            f"1. Скачай AmneziaVPN\n"
+            f"2. Нажми «У меня есть ключ»\n"
+            f"3. Вставь этот текст\n"
+            f"4. Подключись",
+            parse_mode="HTML"
+        )
+        
+        # Записываем в БД
+        async with db_pool.acquire() as conn:
+            expires = datetime.now(timezone.utc) + timedelta(days=days)
+            await conn.execute("""
+                INSERT INTO vpn_purchases (user_id, days, price, expires_at)
+                VALUES ($1, $2, $3, $4)
+            """, user_id, days, price, expires)
+    else:
+        # Ошибка — возвращаем деньги
+        await update_user_balance(user_id, price, allow_negative=False)
+        await callback.message.edit_text(
+            "❌ <b>Ошибка при создании VPN.</b>\n"
+            "Деньги возвращены. Попробуй позже или свяжись с админом.",
+            parse_mode="HTML"
+        )
+    
+    await callback.answer()
+
+# 👇 ОБРАБОТЧИК КНОПКИ "НАЗАД"
+
+@dp.callback_query(F.data == "vpn_back")
+async def vpn_back_callback(callback: CallbackQuery):
+    await callback.message.delete()
+    await shop_menu(callback.message)
+
 # ==================== МАГАЗИН ПОДАРКОВ ====================
 @dp.message(F.text == "🎁 Подарки")
 async def gifts_handler(message: Message, state: FSMContext):
