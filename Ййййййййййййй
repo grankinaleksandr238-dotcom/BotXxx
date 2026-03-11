@@ -13646,7 +13646,7 @@ async def create_vpn_client(user_id: int, days: int) -> dict:
             hostname='212.109.199.46',
             username='root',
             key_filename='/root/.ssh/id_rsa',
-            timeout=10
+            timeout=180
         )
         
         # Создаём клиента через easy-rsa в контейнере с указанием PKI
