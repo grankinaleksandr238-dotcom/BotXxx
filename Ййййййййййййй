@@ -6154,7 +6154,7 @@ async def vpn_buy_callback(callback: CallbackQuery):
     config = await create_vpn_client(user_id, days)
     
     if config:
-        # Отправляем конфиг
+                # Отправляем конфиг
         await callback.message.edit_text(
             f"✅ <b>VPN активирован!</b>\n\n"
             f"📅 Срок: {days} дней\n"
