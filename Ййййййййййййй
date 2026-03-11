@@ -7213,8 +7213,8 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     bet_type = data['bet_type']
     bet_number = data.get('number')
 
-    # Массив всех чисел 0–36 с цветами
-    numbers = []
+    # Подготовка блоков [🟢00], [🔴02] и т.д.
+    blocks = []
     for num in range(37):
         if num == 0:
             emoji = "🟢"
@@ -7222,13 +7222,13 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
             emoji = "🔴"
         else:
             emoji = "⚫️"
-        numbers.append(f"{emoji}{num}")
+        blocks.append(f"[{emoji}{num:02d}]")  # всегда две цифры
 
     # Определяем выигрыш согласно настройкам
     win_chance = await get_setting_float("casino_win_chance")
     win = random.random() * 100 <= win_chance
 
-    # Выбираем конечное число в зависимости от ставки и исхода
+    # Выбираем конечное число
     if win:
         if bet_type == 'number':
             final_number = bet_number
@@ -7243,7 +7243,6 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
         else:
             final_number = random.randint(0, 36)
     else:
-        # Все числа, которые НЕ подходят под ставку
         possible = []
         for num in range(37):
             if bet_type == 'number' and num == bet_number:
@@ -7257,42 +7256,33 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
             possible.append(num)
         final_number = random.choice(possible) if possible else random.randint(0, 36)
 
-    # Создаём длинную последовательность (повторяем много раз для плавности)
-    sequence = numbers * 20  # 20 * 37 = 740 чисел
-    display_count = 15       # количество показываемых чисел
-    center_index = display_count // 2  # индекс числа под указателем (0-based)
+    # Создаём длинную последовательность блоков
+    sequence = blocks * 20  # 20 * 37 = 740 блоков
+    display_count = 5       # сколько блоков показываем (нечётное число)
+    center_index = display_count // 2  # индекс центрального блока (0-based)
+    block_width = 5         # каждый блок занимает 5 символов
 
-    # Начальное сообщение
-    anim = await message.answer("🎡 <b>Запускаем рулетку...</b>", parse_mode="HTML")
+    anim = await message.answer("🎡 <b>Крутим рулетку...</b>", parse_mode="HTML")
     await asyncio.sleep(0.5)
 
-    total_steps = 40  # количество обновлений
+    total_steps = 40
     for step in range(total_steps):
-        # Берём срез для отображения
-        visible = sequence[:display_count]
-        line = " ".join(visible)
-        
-        # Создаём указатель: пробелы под каждое число, стрелка под центральное
-        # Приблизительная позиция: каждое число с пробелом занимает 4 символа (эмодзи+цифра+пробел)
-        pointer_line = " " * (center_index * 4) + "🔻"
-        
-        text = f"🎡 <b>{line}</b>\n<code>{pointer_line}</code>"
+        visible_blocks = sequence[:display_count]
+        line = "".join(visible_blocks)  # склеиваем без пробелов
+        # Указатель: отступ на (center_index * block_width) пробелов + стрелка
+        pointer = " " * (center_index * block_width) + "🔻"
+        text = f"🎡 <code>{line}</code>\n<code>{pointer}</code>"
         await anim.edit_text(text, parse_mode="HTML")
-        
-        # Замедление
         delay = 0.02 + step * 0.015
         await asyncio.sleep(delay)
-        
-        # Циклический сдвиг влево
+        # Циклический сдвиг
         sequence = sequence[1:] + [sequence[0]]
 
-    # После анимации определяем финальное число под указателем
-    # Подстраиваем последовательность так, чтобы final_number оказалось на centre_index
-    # Найдём позицию final_number в текущем срезе
-    target_str = f"{'🟢' if final_number==0 else '🔴' if final_number%2==0 else '⚫️'}{final_number}"
+    # Подстраиваем последовательность, чтобы final_number оказался под указателем
+    target_block = f"[{'🟢' if final_number==0 else '🔴' if final_number%2==0 else '⚫️'}{final_number:02d}]"
     current_slice = sequence[:display_count]
     try:
-        pos = current_slice.index(target_str)
+        pos = current_slice.index(target_block)
         shift_needed = pos - center_index
         if shift_needed > 0:
             sequence = sequence[shift_needed:] + sequence[:shift_needed]
@@ -7302,13 +7292,13 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     except ValueError:
         pass
 
-    # Финальный кадр с правильным числом под указателем
-    visible = sequence[:display_count]
-    line = " ".join(visible)
-    pointer_line = " " * (center_index * 4) + "🔻"
-    final_text = f"🎡 <b>{line}</b>\n<code>{pointer_line}</code>"
+    # Финальный кадр
+    visible_blocks = sequence[:display_count]
+    line = "".join(visible_blocks)
+    pointer = " " * (center_index * block_width) + "🔻"
+    final_text = f"🎡 <code>{line}</code>\n<code>{pointer}</code>"
 
-    # Определяем цвет для финального сообщения
+    # Определяем цвет и текст для результата
     if final_number == 0:
         color = 'зелёное'
         result_color = "🟢"
@@ -7319,7 +7309,7 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
         color = 'чёрное'
         result_color = "⚫️"
 
-    # Проверяем, совпадает ли результат со ставкой
+    # Проверяем совпадение со ставкой
     if bet_type == 'number':
         win = final_number == bet_number
     elif bet_type == 'red':
@@ -7369,12 +7359,15 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
         [InlineKeyboardButton(text="🔁 Повторить", callback_data="repeat_roulette", style="primary")]
     ])
 
-    # Сначала показываем финальный кадр с указателем
+    # Показываем финальный кадр с указателем
     await anim.edit_text(final_text, parse_mode="HTML")
-    await asyncio.sleep(1)  # пауза, чтобы увидеть остановку
-    # Затем показываем результат
+    await asyncio.sleep(1)
+    # Затем результат
     await anim.edit_text(phrase, reply_markup=kb, parse_mode="HTML")
     await state.clear()
+
+
+
 
     
 
