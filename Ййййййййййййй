@@ -7213,7 +7213,7 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     bet_type = data['bet_type']
     bet_number = data.get('number')
 
-    # Блоки вида "🔴 02" – ровно 4 символа (эмодзи, пробел, две цифры)
+    # Блоки с эмодзи и двумя цифрами, например "🟢12"
     blocks = []
     for num in range(37):
         if num == 0:
@@ -7222,9 +7222,9 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
             emoji = "🔴"
         else:
             emoji = "⚫️"
-        blocks.append(f"{emoji} {num:02d}")
+        blocks.append(f"{emoji}{num:02d}")
 
-    # Определяем выигрыш согласно настройкам
+    # Определяем выигрыш
     win_chance = await get_setting_float("casino_win_chance")
     win = random.random() * 100 <= win_chance
 
@@ -7258,9 +7258,10 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
 
     # Длинная последовательность блоков
     sequence = blocks * 20
-    display_count = 5          # показываем 5 блоков
+    display_count = 5               # сколько блоков показываем
     center_index = display_count // 2
-    block_width = 4             # каждый блок 4 символа
+    # Ширина одного блока с пробелом: эмодзи(2) + две цифры(2) + пробел(1) = 5 символов
+    block_width_with_space = 5
 
     anim = await message.answer("🎡 <b>Крутим рулетку...</b>", parse_mode="HTML")
     await asyncio.sleep(0.5)
@@ -7268,44 +7269,47 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
     total_steps = 40
     for step in range(total_steps):
         visible = sequence[:display_count]
-        line = " ".join(visible)   # разделяем пробелом для красоты
-        # Указатель сверху: отступ под центральный блок
-        pointer = " " * (center_index * (block_width + 1)) + "🔻"  # +1 из-за пробела между блоками
-        text = f"🎡 <code>{line}</code>\n<code>{pointer}</code>"
+        line = " ".join(visible)     # вставляем пробелы между блоками
+        # Рассчитываем отступ для стрелки над центральным блоком
+        pointer = " " * (center_index * block_width_with_space) + "▼"
+        # Рамка из псевдографики
+        top_border = "╔" + "═" * (len(line) + 2) + "╗"
+        bottom_border = "╚" + "═" * (len(line) + 2) + "╝"
+        text = f"<code>{top_border}</code>\n<code>║ {line} ║</code>\n<code>║ {pointer} ║</code>\n<code>{bottom_border}</code>"
         await anim.edit_text(text, parse_mode="HTML")
-        delay = 0.02 + step * 0.015
+        delay = 0.02 + step * 0.015   # замедление
         await asyncio.sleep(delay)
+        # Циклический сдвиг
         sequence = sequence[1:] + [sequence[0]]
 
-    # Формируем целевой блок
+    # Формируем целевой блок для финального числа
     if final_number == 0:
         target_emoji = "🟢"
     elif final_number % 2 == 0:
         target_emoji = "🔴"
     else:
         target_emoji = "⚫️"
-    target_block = f"{target_emoji} {final_number:02d}"
+    target_block = f"{target_emoji}{final_number:02d}"
 
-    # Корректируем последовательность, чтобы target_block оказался под указателем
+    # Корректируем последовательность, чтобы target_block оказался под стрелкой
     current_slice = sequence[:display_count]
     try:
         pos = current_slice.index(target_block)
         shift_needed = pos - center_index
-        if shift_needed > 0:
+        if shift_needed != 0:
             sequence = sequence[shift_needed:] + sequence[:shift_needed]
-        elif shift_needed < 0:
-            sequence = sequence[shift_needed:] + sequence[:shift_needed]  # отрицательный сдвиг работает так же в Python
     except ValueError:
-        # Если вдруг не нашли, просто ставим в центр
         pass
 
-    # Финальный кадр с указателем
+    # Финальный кадр с правильным числом под стрелкой
     visible = sequence[:display_count]
     line = " ".join(visible)
-    pointer = " " * (center_index * (block_width + 1)) + "🔻"
-    final_text = f"🎡 <code>{line}</code>\n<code>{pointer}</code>"
+    pointer = " " * (center_index * block_width_with_space) + "▼"
+    top_border = "╔" + "═" * (len(line) + 2) + "╗"
+    bottom_border = "╚" + "═" * (len(line) + 2) + "╝"
+    final_text = f"<code>{top_border}</code>\n<code>║ {line} ║</code>\n<code>║ {pointer} ║</code>\n<code>{bottom_border}</code>"
 
-    # Цвет и текст для результата
+    # Определяем цвет и текст для результата
     if final_number == 0:
         color = 'зелёное'
         result_color = "🟢"
@@ -7366,7 +7370,7 @@ async def process_roulette_bet(message: Message, state: FSMContext, user_id: int
         [InlineKeyboardButton(text="🔁 Повторить", callback_data="repeat_roulette", style="primary")]
     ])
 
-    # Показываем финальный кадр с указателем
+    # Показываем финальный кадр с рамкой и стрелкой
     await anim.edit_text(final_text, parse_mode="HTML")
     await asyncio.sleep(1)
     # Затем результат
