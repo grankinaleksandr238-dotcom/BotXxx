@@ -13635,11 +13635,10 @@ import os
 
 async def create_vpn_client(user_id: int, days: int) -> str:
     """
-    Создаёт VPN-клиента через SSH и возвращает конфиг.
+    Создаёт VPN-клиента через SSH и возвращает конфиг для OpenVPN.
     days: срок в днях (1, 7, 30)
     """
     client_name = f"user_{user_id}_{int(time.time())}"
-    client_ip = f"10.8.0.{user_id % 250 + 10}"  # генерируем IP на основе user_id
     
     try:
         # Подключаемся по SSH к серверу
@@ -13648,45 +13647,31 @@ async def create_vpn_client(user_id: int, days: int) -> str:
         ssh.connect(
             hostname='212.109.199.46',
             username='root',
-            password='Alexandr997'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ ОТ СЕРВЕРА !!!
+            password='твой_пароль'  # !!! ЗАМЕНИ НА СВОЙ ПАРОЛЬ !!!
         )
         
-        # Генерируем ключи
-        stdin, stdout, stderr = ssh.exec_command("wg genkey")
-        private_key = stdout.read().decode().strip()
-        
-        stdin, stdout, stderr = ssh.exec_command(f"echo '{private_key}' | wg pubkey")
-        public_key = stdout.read().decode().strip()
-        
-        # Получаем публичный ключ сервера
-        stdin, stdout, stderr = ssh.exec_command("grep PrivateKey /etc/amnezia/amneziawg/awg0.conf | cut -d' ' -f3 | wg pubkey")
-        server_public_key = stdout.read().decode().strip()
-        
-        # Добавляем клиента в конфиг сервера
+        # Создаём клиента через easy-rsa
         commands = [
-            f"echo '' >> /etc/amnezia/amneziawg/awg0.conf",
-            f"echo '[Peer]' >> /etc/amnezia/amneziawg/awg0.conf",
-            f"echo 'PublicKey = {public_key}' >> /etc/amnezia/amneziawg/awg0.conf",
-            f"echo 'AllowedIPs = {client_ip}/32' >> /etc/amnezia/amneziawg/awg0.conf",
-            f"systemctl restart awg-quick@awg0"
+            f"cd /etc/openvpn/easy-rsa && ./easyrsa build-client-full {client_name} nopass",
+            f"cd /etc/openvpn/client && cp /etc/openvpn/client-template.txt {client_name}.ovpn",
+            f"echo '<ca>' >> /etc/openvpn/client/{client_name}.ovpn",
+            f"cat /etc/openvpn/ca.crt >> /etc/openvpn/client/{client_name}.ovpn",
+            f"echo '</ca>' >> /etc/openvpn/client/{client_name}.ovpn",
+            f"echo '<cert>' >> /etc/openvpn/client/{client_name}.ovpn",
+            f"cat /etc/openvpn/easy-rsa/pki/issued/{client_name}.crt >> /etc/openvpn/client/{client_name}.ovpn",
+            f"echo '</cert>' >> /etc/openvpn/client/{client_name}.ovpn",
+            f"echo '<key>' >> /etc/openvpn/client/{client_name}.ovpn",
+            f"cat /etc/openvpn/easy-rsa/pki/private/{client_name}.key >> /etc/openvpn/client/{client_name}.ovpn",
+            f"echo '</key>' >> /etc/openvpn/client/{client_name}.ovpn",
         ]
         
         for cmd in commands:
             ssh.exec_command(cmd)
             time.sleep(0.5)
         
-        # Собираем конфиг для клиента
-        config = f"""[Interface]
-PrivateKey = {private_key}
-Address = {client_ip}/24
-DNS = 77.88.8.8, 77.88.8.1
-
-[Peer]
-PublicKey = {server_public_key}
-Endpoint = 212.109.199.46:39743
-AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = 25
-"""
+        # Получаем готовый конфиг
+        stdin, stdout, stderr = ssh.exec_command(f"cat /etc/openvpn/client/{client_name}.ovpn")
+        config = stdout.read().decode().strip()
         
         ssh.close()
         return config
