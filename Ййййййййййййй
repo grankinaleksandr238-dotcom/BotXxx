@@ -1963,20 +1963,12 @@ async def add_confirmed_chat(chat_id: int, title: str, chat_type: str, confirmed
             chat_id, title, chat_type, now, confirmed_by, now
         )
     await get_confirmed_chats(force_update=True)
+
 @db_retry()
 async def remove_confirmed_chat(chat_id: int):
     async with db_pool.acquire() as conn:
         await conn.execute("DELETE FROM confirmed_chats WHERE chat_id=$1", chat_id)
     await get_confirmed_chats(force_update=True)
-
-@db_retry()
-async def create_chat_confirmation_request(chat_id: int, title: str, chat_type: str, requested_by: int):
-    async with db_pool.acquire() as conn:
-        now = datetime.now(timezone.utc)
-        await conn.execute(
-            "INSERT INTO chat_confirmation_requests (chat_id, title, type, requested_by, request_date, status) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (chat_id) DO UPDATE SET status='pending', requested_by=$4, request_date=$5",
-            chat_id, title, chat_type, requested_by, now, 'pending'
-        )
 
 @db_retry()
 async def create_chat_confirmation_request(chat_id: int, title: str, chat_type: str, requested_by: int):
