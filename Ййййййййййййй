@@ -13997,6 +13997,62 @@ async def vpn_expiration_checker():
             logging.error(f"VPN expiration checker error: {e}")
             await asyncio.sleep(60)
 
+
+@dp.callback_query(F.data.startswith("conf_chat_"))
+async def confirm_chat_callback(callback: CallbackQuery):
+    """Подтверждение запроса на активацию чата."""
+    chat_id = int(callback.data.split("_")[2])
+    admin_id = callback.from_user.id
+
+    if not await is_admin(admin_id):
+        await callback.answer("❌ Нет прав", show_alert=True)
+        return
+
+    async with db_pool.acquire() as conn:
+        request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+        if not request:
+            await callback.answer("❌ Запрос не найден", show_alert=True)
+            return
+
+        await add_confirmed_chat(chat_id, request['title'], request['type'], admin_id)
+        await update_chat_request_status(chat_id, 'approved')
+
+    await safe_send_message(
+        request['requested_by'],
+        f"✅ <b>Ваш чат «{request['title']}» активирован!</b>",
+        parse_mode="HTML"
+    )
+
+    await callback.message.edit_text(f"✅ Чат «{request['title']}» подтверждён.", parse_mode="HTML")
+    await callback.answer("✅ Чат подтверждён")
+
+@dp.callback_query(F.data.startswith("rej_chat_"))
+async def reject_chat_callback(callback: CallbackQuery):
+    """Отклонение запроса на активацию чата."""
+    chat_id = int(callback.data.split("_")[2])
+    admin_id = callback.from_user.id
+
+    if not await is_admin(admin_id):
+        await callback.answer("❌ Нет прав", show_alert=True)
+        return
+
+    async with db_pool.acquire() as conn:
+        request = await conn.fetchrow("SELECT * FROM chat_confirmation_requests WHERE chat_id=$1", chat_id)
+        if not request:
+            await callback.answer("❌ Запрос не найден", show_alert=True)
+            return
+
+        await update_chat_request_status(chat_id, 'rejected')
+
+    await safe_send_message(
+        request['requested_by'],
+        f"❌ <b>Запрос на активацию чата «{request['title']}» отклонён.</b>",
+        parse_mode="HTML"
+    )
+
+    await callback.message.edit_text(f"❌ Запрос для чата «{request['title']}» отклонён.", parse_mode="HTML")
+    await callback.answer("❌ Запрос отклонён")
+
 # ==================== КОНЕЦ ====================
 
 if __name__ == '__main__':
