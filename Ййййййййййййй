@@ -1957,12 +1957,12 @@ async def is_chat_confirmed(chat_id: int) -> bool:
 @db_retry()
 async def add_confirmed_chat(chat_id: int, title: str, chat_type: str, confirmed_by: int):
     async with db_pool.acquire() as conn:
+        now = datetime.now(timezone.utc)
         await conn.execute(
             "INSERT INTO confirmed_chats (chat_id, title, type, joined_date, confirmed_by, confirmed_date) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (chat_id) DO UPDATE SET confirmed_by=$5, confirmed_date=$6",
-            chat_id, title, chat_type, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"), confirmed_by, datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            chat_id, title, chat_type, now, confirmed_by, now
         )
     await get_confirmed_chats(force_update=True)
-
 @db_retry()
 async def remove_confirmed_chat(chat_id: int):
     async with db_pool.acquire() as conn:
@@ -1978,10 +1978,13 @@ async def create_chat_confirmation_request(chat_id: int, title: str, chat_type: 
         )
 
 @db_retry()
-async def get_pending_chat_requests() -> List[dict]:
+async def create_chat_confirmation_request(chat_id: int, title: str, chat_type: str, requested_by: int):
     async with db_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM chat_confirmation_requests WHERE status='pending' ORDER BY request_date")
-        return [dict(r) for r in rows]
+        now = datetime.now(timezone.utc)
+        await conn.execute(
+            "INSERT INTO chat_confirmation_requests (chat_id, title, type, requested_by, request_date, status) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (chat_id) DO UPDATE SET status='pending', requested_by=$4, request_date=$5",
+            chat_id, title, chat_type, requested_by, now, 'pending'
+        )
 
 @db_retry()
 async def update_chat_request_status(chat_id: int, status: str):
