@@ -327,22 +327,7 @@ DEFAULT_SETTINGS = {
 
     # ----- АВТОУДАЛЕНИЕ -----
     "auto_delete_commands_seconds": "900",
-async def auto_delete_bot_message(message: Message, chat_id: int = None, delete_seconds: int = None):
-    """
-    Автоматически удаляет сообщение бота через delete_seconds,
-    если в чате включено автоудаление.
-    """
-    if delete_seconds is None:
-        delete_seconds = int(await get_setting("auto_delete_commands_seconds"))
-    if chat_id is None:
-        chat_id = message.chat.id
-    if chat_id > 0:  # личные сообщения – не удаляем
-        return
-    confirmed = await get_confirmed_chats()
-    chat_data = confirmed.get(chat_id)
-    if chat_data and not chat_data.get('auto_delete_enabled', True):
-        return
-    asyncio.create_task(delete_after(message, delete_seconds))
+
 
     # ----- СТАРТОВЫЙ БОНУС -----
     "new_user_bonus": "50",
@@ -1101,6 +1086,23 @@ async def auto_delete_command(message: Message, text: str = None, **kwargs):
         delete_seconds = int(await get_setting("auto_delete_commands_seconds"))
         sent = await message.answer(text, **kwargs)
         asyncio.create_task(delete_after(sent, delete_seconds))
+
+async def auto_delete_bot_message(message: Message, chat_id: int = None, delete_seconds: int = None):
+    """
+    Автоматически удаляет сообщение бота через delete_seconds,
+    если в чате включено автоудаление.
+    """
+    if delete_seconds is None:
+        delete_seconds = int(await get_setting("auto_delete_commands_seconds"))
+    if chat_id is None:
+        chat_id = message.chat.id
+    if chat_id > 0:  # личные сообщения – не удаляем
+        return
+    confirmed = await get_confirmed_chats()
+    chat_data = confirmed.get(chat_id)
+    if chat_data and not chat_data.get('auto_delete_enabled', True):
+        return
+    asyncio.create_task(delete_after(message, delete_seconds))
 
 # ==================== КОНЕЦ ЧАСТИ 1a ====================
 # ==================== ПОДКЛЮЧЕНИЕ К БД ====================
