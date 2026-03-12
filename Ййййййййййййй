@@ -4412,19 +4412,27 @@ def heist_join_keyboard(heist_id: int) -> InlineKeyboardMarkup:
         )]
     ])
 
-def jail_cell_keyboard() -> InlineKeyboardMarkup:
-    """Клавиатура выбора камеры."""
+def jail_cell_keyboard(user_id: int) -> InlineKeyboardMarkup:
+    """Клавиатура выбора камеры с привязкой к пользователю."""
     kb = []
     row = []
     for i in range(1, 16):
         row.append(InlineKeyboardButton(
             text=str(i),
-            callback_data=f"jc_{i}",
+            callback_data=f"jc_{user_id}_{i}",
             style="primary"
         ))
         if len(row) == 5:
             kb.append(row)
             row = []
+    if row:
+        kb.append(row)
+    kb.append([InlineKeyboardButton(
+        text="❌ Отмена",
+        callback_data=f"jail_cancel_{user_id}",
+        style="danger"
+    )])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
     if row:
         kb.append(row)
     kb.append([InlineKeyboardButton(
@@ -8387,44 +8395,40 @@ async def cmd_jail(message: Message, state: FSMContext):
 
     await auto_delete_message(message)
 
+    # Сохраняем chat_id в состоянии (он же message.chat.id)
     await state.set_state(JailProcess.cell)
     await state.update_data(chat_id=message.chat.id)
 
-    try:
-        await safe_send_message(
-            user_id,
-            "🔒 <b>Выбери номер камеры, в которую хочешь отправиться (от 1 до 15):</b>",
-            reply_markup=jail_cell_keyboard(),
-            parse_mode="HTML"
-        )
-    except Exception as e:
-        logging.error(f"Failed to send jail menu to {user_id}: {e}")
-        await auto_delete_reply(
-            message,
-            "❌ <b>Не удалось отправить сообщение в ЛС. Напиши боту в личку сначала.</b>"
-        )
-        try:
-            await message.delete()
-        except:
-            pass
-        return
+    # Отправляем сообщение с выбором камеры прямо в чат
+    await message.answer(
+        "🔒 <b>Выбери номер камеры, в которую хочешь отправиться (от 1 до 15):</b>",
+        reply_markup=jail_cell_keyboard(user_id),
+        parse_mode="HTML"
+    )
 
 @dp.callback_query(F.data.startswith("jc_"))
 async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
     try:
-        cell = int(callback.data.split("_")[1])
+        parts = callback.data.split("_")
+        target_user_id = int(parts[1])
+        cell = int(parts[2])
+
+        if callback.from_user.id != target_user_id:
+            await callback.answer("❌ Это не твоя тюрьма!", show_alert=True)
+            return
+
         if cell < 1 or cell > 15:
             await callback.answer("❌ Неверный номер камеры", show_alert=True)
             return
 
-        await state.update_data(cell=cell)
-        await callback.answer(f"✅ Выбрана камера {cell}")
-
-        article = random.randint(1, 300)
-        await state.update_data(article=article)
-
         data = await state.get_data()
         chat_id = data.get('chat_id')
+        if not chat_id:
+            await callback.answer("❌ Ошибка: не найден чат. Попробуй начать заново.", show_alert=True)
+            await state.clear()
+            return
+
+        article = random.randint(1, 300)
         user_id = callback.from_user.id
 
         min_duration = await get_setting_int("jail_min_duration")
@@ -8436,13 +8440,12 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
         if random.random() < 0.01:
             gift_amount = await get_setting_float("golden_ticket_gift")
             await update_user_balance(user_id, gift_amount, allow_negative=False)
-            if chat_id:
-                await safe_send_chat(
-                    chat_id,
-                    f"🎫 <b>ЗОЛОТОЙ БИЛЕТ!</b>\n"
-                    f"{callback.from_user.first_name} нашёл золотой билет и получает {gift_amount:.2f} MLB!",
-                    parse_mode="HTML"
-                )
+            await safe_send_chat(
+                chat_id,
+                f"🎫 <b>ЗОЛОТОЙ БИЛЕТ!</b>\n"
+                f"{callback.from_user.first_name} нашёл золотой билет и получает {gift_amount:.2f} MLB!",
+                parse_mode="HTML"
+            )
 
         name = callback.from_user.first_name
         phrase = get_random_phrase(JAIL_START_PHRASES, name=name, duration=duration)
@@ -8450,28 +8453,20 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
         cooldown_hours_jail = await get_setting_int("jail_cooldown_hours")
         await set_global_cooldown(user_id, 'jail', cooldown_hours_jail * 3600)
 
-        if chat_id:
-            await safe_send_chat(chat_id, phrase, parse_mode="HTML")
-        else:
-            await callback.message.answer(phrase, parse_mode="HTML")
+        await safe_send_chat(chat_id, phrase, parse_mode="HTML")
 
-        await callback.message.answer("✅ <b>Ты отправился в тюрьму! Ожидай результатов.</b>", parse_mode="HTML")
+        await callback.message.edit_text(
+            f"✅ <b>Ты отправился в тюрьму! Ожидай результатов.</b>\nКамера: {cell}",
+            parse_mode="HTML"
+        )
+
         await state.clear()
+        await callback.answer()
 
     except Exception as e:
         logging.exception(f"Ошибка в jail_cell_callback: {e}")
         await callback.answer("❌ Произошла ошибка", show_alert=True)
         await state.clear()
-
-@dp.callback_query(F.data == "jail_cancel")
-async def jail_cancel_callback(callback: CallbackQuery, state: FSMContext):
-    await callback.answer("❌ Отменено")
-    await state.clear()
-    await callback.message.answer(
-        "❌ <b>Процесс отменён.</b>",
-        reply_markup=main_menu_keyboard(await is_admin(callback.from_user.id)),
-        parse_mode="HTML"
-    )
 
 # ==================== ДРУГИЕ ГРУППОВЫЕ КОМАНДЫ ====================
 
