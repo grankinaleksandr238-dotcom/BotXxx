@@ -327,6 +327,22 @@ DEFAULT_SETTINGS = {
 
     # ----- АВТОУДАЛЕНИЕ -----
     "auto_delete_commands_seconds": "900",
+async def auto_delete_bot_message(message: Message, chat_id: int = None, delete_seconds: int = None):
+    """
+    Автоматически удаляет сообщение бота через delete_seconds,
+    если в чате включено автоудаление.
+    """
+    if delete_seconds is None:
+        delete_seconds = int(await get_setting("auto_delete_commands_seconds"))
+    if chat_id is None:
+        chat_id = message.chat.id
+    if chat_id > 0:  # личные сообщения – не удаляем
+        return
+    confirmed = await get_confirmed_chats()
+    chat_data = confirmed.get(chat_id)
+    if chat_data and not chat_data.get('auto_delete_enabled', True):
+        return
+    asyncio.create_task(delete_after(message, delete_seconds))
 
     # ----- СТАРТОВЫЙ БОНУС -----
     "new_user_bonus": "50",
@@ -8455,8 +8471,12 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
 
         await safe_send_chat(chat_id, phrase, parse_mode="HTML")
 
-        await callback.message.edit_text(
-            f"✅ <b>Ты отправился в тюрьму! Ожидай результатов.</b>\nКамера: {cell}",
+                # Удаляем сообщение с выбором камеры
+        await callback.message.delete()
+        # Отправляем финальное сообщение
+        await bot.send_message(
+            chat_id,
+            f"✅ <b>{callback.from_user.first_name}, ты отправился в тюрьму! Ожидай результатов.</b>\nКамера: {cell}",
             parse_mode="HTML"
         )
 
@@ -8468,6 +8488,19 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
         await callback.answer("❌ Произошла ошибка", show_alert=True)
         await state.clear()
 
+@dp.callback_query(F.data.startswith("jail_cancel_"))
+async def jail_cancel_callback(callback: CallbackQuery, state: FSMContext):
+    parts = callback.data.split("_")
+    target_user_id = int(parts[2])
+    if callback.from_user.id != target_user_id:
+        await callback.answer("❌ Это не твоя тюрьма!", show_alert=True)
+        return
+    await callback.answer("❌ Отменено")
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ <b>Процесс отменён.</b>",
+        parse_mode="HTML"
+    )
 # ==================== ДРУГИЕ ГРУППОВЫЕ КОМАНДЫ ====================
 
 @dp.message(Command("mlb_heist"))
