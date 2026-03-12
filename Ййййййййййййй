@@ -8364,12 +8364,14 @@ async def cmd_smuggle(message: Message):
     name = message.from_user.first_name
     phrase = get_random_phrase(SMUGGLE_START_PHRASES, name=name, cargo=cargo, duration=duration)
 
-    await message.delete()
+        await message.delete()
     file_id = await get_media_file_id('smuggle_start')
     if file_id:
-        await bot.send_photo(message.chat.id, file_id, caption=phrase, parse_mode="HTML")
+        msg = await bot.send_photo(message.chat.id, file_id, caption=phrase, parse_mode="HTML")
+        await auto_delete_bot_message(msg, message.chat.id)
     else:
-        await safe_send_chat(message.chat.id, phrase, parse_mode="HTML")
+        msg = await bot.send_message(message.chat.id, phrase, parse_mode="HTML")
+        await auto_delete_bot_message(msg, message.chat.id)
 
 # ==================== ТЮРЬМА ====================
 @dp.message(Command("mlb_jail"))
@@ -8471,16 +8473,20 @@ async def jail_cell_callback(callback: CallbackQuery, state: FSMContext):
         cooldown_hours_jail = await get_setting_int("jail_cooldown_hours")
         await set_global_cooldown(user_id, 'jail', cooldown_hours_jail * 3600)
 
-        await safe_send_chat(chat_id, phrase, parse_mode="HTML")
+                # Отправляем фразу о начале срока и сохраняем для автоудаления
+        msg1 = await bot.send_message(chat_id, phrase, parse_mode="HTML")
+        await auto_delete_bot_message(msg1, chat_id)
 
-                # Удаляем сообщение с выбором камеры
+        # Удаляем сообщение с выбором камеры
         await callback.message.delete()
-        # Отправляем финальное сообщение
-        await bot.send_message(
+
+        # Отправляем финальное сообщение и сохраняем для автоудаления
+        msg2 = await bot.send_message(
             chat_id,
             f"✅ <b>{callback.from_user.first_name}, ты отправился в тюрьму! Ожидай результатов.</b>\nКамера: {cell}",
             parse_mode="HTML"
         )
+        await auto_delete_bot_message(msg2, chat_id)
 
         await state.clear()
         await callback.answer()
