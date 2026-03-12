@@ -8362,7 +8362,7 @@ async def cmd_smuggle(message: Message):
     await set_smuggle_cooldown(user_id, 0)
 
     name = message.from_user.first_name
-        phrase = get_random_phrase(SMUGGLE_START_PHRASES, name=name, cargo=cargo, duration=duration)
+    phrase = get_random_phrase(SMUGGLE_START_PHRASES, name=name, cargo=cargo, duration=duration)
 
     await message.delete()
     file_id = await get_media_file_id('smuggle_start')
